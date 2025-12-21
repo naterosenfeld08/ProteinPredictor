@@ -1,0 +1,113 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+venv_py311/
+ENV/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Results and cache
+results/
+embeddings_cache/
+training_output/
+validation_output/
+*.pkl
+*.npy
+*.npz
+*.json
+example_results/
+example_data.csv
+
+# Models (downloaded from HuggingFace)
+models/
+.cache/
+.huggingface/
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*.sublime-project
+*.sublime-workspace
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+*.log
+logs/
+
+# Data files (large datasets should not be committed)
+*.csv
+!requirements.txt
+fireprotdb*.csv
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*~
+
+# MLflow
+mlruns/
+
+# Weights & Biases
+wandb/
+
+# PyTorch
+*.pt
+*.pth
+*.ckpt
+
+# TensorFlow
+*.pb
+*.h5
+
+# Plot outputs (keep structure, ignore generated plots)
+*.png
+*.jpg
+*.jpeg
+*.pdf
+*.svg
+
+# Summary folders (keep structure, ignore generated content)
+Ensemble Summary/
+Ensemble Evaluation Summary/
+Model Comparison Summary/
+Embedding Summary/
+MLP Summary/
+Baseline Lock/
+
+# But keep README files in summary folders
+!**/README.md
+!**/README.txt
+!**/*.md
+
+# Keep documentation but ignore generated visualizations
+!**/*.md
+!**/*.txt

@@ -124,12 +124,9 @@ class DDGPredictionDataset(Dataset):
                 f"({len(self.ddg_targets_tensor)}) must have same length"
             )
         
-        expected_dim = 2344
-        if self.embeddings_tensor.shape[1] != expected_dim:
-            raise ValueError(
-                f"Expected {expected_dim}-dimensional embeddings, "
-                f"got {self.embeddings_tensor.shape[1]}"
-            )
+        # The original repo hard-coded 2344-dim embeddings (ProtT5+ESM2+composition).
+        # For the newer ensemble training path we may optionally use fewer components,
+        # so we accept any embedding dimensionality as long as labels align.
     
     def __len__(self) -> int:
         """
@@ -385,6 +382,7 @@ class BaselineMLP(nn.Module):
             - Input features are normalized (if normalization is used during training)
             - Input features have the same distribution as training data
         """
+        x = feature_tensor
         # Layer 1
         x = self.fc1(x)
         x = self.relu1(x)

@@ -52,7 +52,8 @@ class ModelValidator:
         self,
         model_path: str,
         output_dir: str = "./validation_output",
-        splits_path: Optional[str] = None
+        splits_path: Optional[str] = None,
+        use_composition_features: bool = True,
     ):
         """
         Initialize model validator.
@@ -65,6 +66,7 @@ class ModelValidator:
         self.model_path = Path(model_path)
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        self.use_composition_features = use_composition_features
         
         # Find splits file
         if splits_path is None:
@@ -172,10 +174,13 @@ class ModelValidator:
         else:
             raise ValueError("No embeddings extracted")
         
-        # Add composition features
-        embeddings_dict_combined = {'combined': embeddings}
-        enhanced = add_composition_features(embeddings_dict_combined, sequences)
-        final_embeddings = enhanced['combined']
+        # Optionally add composition features to match training-time features.
+        if self.use_composition_features:
+            embeddings_dict_combined = {'combined': embeddings}
+            enhanced = add_composition_features(embeddings_dict_combined, sequences)
+            final_embeddings = enhanced['combined']
+        else:
+            final_embeddings = embeddings
         
         self.logger.info(f"Final embeddings shape: {final_embeddings.shape}")
         
@@ -457,13 +462,19 @@ def main():
         default=100,
         help='Minimum number of validation samples required'
     )
+    parser.add_argument(
+        '--no_composition_features',
+        action='store_true',
+        help='Disable amino acid composition feature augmentation'
+    )
     
     args = parser.parse_args()
     
     # Run validation
     validator = ModelValidator(
         model_path=args.model_path,
-        output_dir=args.output_dir
+        output_dir=args.output_dir,
+        use_composition_features=not args.no_composition_features,
     )
     
     results = validator.run_validation(

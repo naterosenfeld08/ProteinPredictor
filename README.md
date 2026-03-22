@@ -428,6 +428,8 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
+**New machine / pushing to a new GitHub account:** see [`docs/GITHUB_SETUP.md`](docs/GITHUB_SETUP.md) (dependencies, what git ignores, `git remote`, push).
+
 ### Key Dependencies
 
 - **torch**: PyTorch for transformer model inference
@@ -454,11 +456,28 @@ python scripts/train.py --model mlp --data_path fireprotdb_with_sequences.csv
 
 ```bash
 # Single sequence prediction
-python scripts/predict.py --sequence "MKTAYIAKQR..." --model_path models/baseline_ensemble.pkl
+python predict.py --sequence "MKTAYIAKQR..." --model_path models/baseline_ensemble.pkl
 
 # Batch prediction from FASTA
-python scripts/predict.py --fasta sequences.fasta --model_path models/baseline_ensemble.pkl
+python predict.py --fasta sequences.fasta --model_path models/baseline_ensemble.pkl
 ```
+
+#### MLP + Random Forest ensemble (ProtT5 + ESM-2, full FireProtDB train)
+
+After training with `train_mlp_rf_ensemble.py` (`--embedding_model_type both`), artifacts are saved under:
+
+- `training_output (CRITICAL DIRECTORY DO NOT TOUCH)/mlp_rf_ensemble_full_both/`
+  - `mlp_rf_ensemble.pkl` — main ensemble for inference
+  - `rf_model.pkl`, `training_metadata.json`, `data_splits.npz`
+
+Example (quote paths with spaces):
+
+```bash
+python predict.py --fasta sequences.fasta \
+  --model_path "training_output (CRITICAL DIRECTORY DO NOT TOUCH)/mlp_rf_ensemble_full_both/mlp_rf_ensemble.pkl"
+```
+
+Use `--no_composition_features` only if that model was trained without composition features (default: **on**; matches `feature_dim` 2344 = ProtT5 + ESM-2 + 20 AA composition).
 
 ### Evaluation
 

@@ -416,7 +416,9 @@ class EmbeddingExtractor:
             prot_t5_embeddings = []
             iterator = tqdm(enumerate(sequences), total=len(sequences), desc="Extracting ProtT5-XL embeddings") if TQDM_AVAILABLE else enumerate(sequences)
             for idx, seq in iterator:
-                cache_file = self.cache_dir / f"prot_t5_{hash(seq)}.npy"
+                # Use stable hashing for cache keys; Python's built-in `hash()` is randomized per process.
+                seq_hash = hashlib.sha1(seq.encode("utf-8")).hexdigest()
+                cache_file = self.cache_dir / f"prot_t5_{seq_hash}.npy"
                 
                 if cache and cache_file.exists():
                     emb = np.load(cache_file)
@@ -444,7 +446,9 @@ class EmbeddingExtractor:
             esm2_embeddings = []
             iterator = tqdm(enumerate(sequences), total=len(sequences), desc="Extracting ESM-2 embeddings") if TQDM_AVAILABLE else enumerate(sequences)
             for idx, seq in iterator:
-                cache_file = self.cache_dir / f"esm2_{hash(seq)}.npy"
+                # Use stable hashing for cache keys; Python's built-in `hash()` is randomized per process.
+                seq_hash = hashlib.sha1(seq.encode("utf-8")).hexdigest()
+                cache_file = self.cache_dir / f"esm2_{seq_hash}.npy"
                 
                 if cache and cache_file.exists():
                     emb = np.load(cache_file)
@@ -681,7 +685,8 @@ def predict_from_fasta(
     min_length: int = 10,
     max_length: int = 5000,
     logger: Optional[logging.Logger] = None,
-    true_values: Optional[Union[List, np.ndarray, Dict]] = None
+    true_values: Optional[Union[List, np.ndarray, Dict]] = None,
+    use_composition_features: bool = True,
 ) -> Dict:
     """
     Predict properties for sequences in a FASTA file
@@ -694,6 +699,8 @@ def predict_from_fasta(
         min_length: Minimum sequence length
         max_length: Maximum sequence length
         logger: Logger instance
+        use_composition_features: Whether to append amino-acid composition features
+            (must match how the model was trained)
         
     Returns:
         Dictionary with predictions
@@ -744,6 +751,12 @@ def predict_from_fasta(
         validate=False,  # Already validated above
         logger=logger
     )
+
+    # Match training-time feature construction. The downstream models expect
+    # the same dimensionality that results from optionally appending composition
+    # features.
+    if use_composition_features:
+        embeddings = add_composition_features(embeddings, sequences_series)
     
     # Prepare features
     if 'prot_t5' in embeddings and 'esm2' in embeddings:
@@ -763,6 +776,9 @@ def predict_from_fasta(
     # Predict
     if isinstance(model, EnsembleModel):
         # Handle ensemble model
+        y_pred, y_pred_std = model.predict_with_uncertainty(X)
+    elif hasattr(model, "predict_with_uncertainty") and callable(getattr(model, "predict_with_uncertainty")):
+        # Generic hook for custom ensembles that can return uncertainties.
         y_pred, y_pred_std = model.predict_with_uncertainty(X)
     elif isinstance(model, (RandomForestRegressor, RandomForestClassifier)):
         is_rf = isinstance(model, RandomForestRegressor)
@@ -888,6 +904,9 @@ def predict_single_sequence_with_outputs(
     # Predict
     if isinstance(model, EnsembleModel):
         # Handle ensemble model
+        y_pred, y_pred_std = model.predict_with_uncertainty(X)
+    elif hasattr(model, "predict_with_uncertainty") and callable(getattr(model, "predict_with_uncertainty")):
+        # Generic hook for custom ensembles that can return uncertainties.
         y_pred, y_pred_std = model.predict_with_uncertainty(X)
     elif isinstance(model, (RandomForestRegressor, RandomForestClassifier)):
         is_rf = isinstance(model, RandomForestRegressor)
@@ -3367,7 +3386,12 @@ if __name__ == "__main__":
         "--use_composition_features",
         action="store_true",
         default=True,
-        help="Add amino acid composition features (default: True)"
+        help="Add amino acid composition features (default: True; use --no_composition_features to disable)"
+    )
+    train_group.add_argument(
+        "--no_composition_features",
+        action="store_true",
+        help="Disable amino acid composition feature augmentation"
     )
     train_group.add_argument(
         "--use_ensemble",
@@ -3469,7 +3493,7 @@ if __name__ == "__main__":
             max_length=args.max_length,
             tune_hyperparameters=args.tune_hyperparameters,
             n_trials=args.n_trials,
-            use_composition_features=args.use_composition_features,
+        use_composition_features=(args.use_composition_features and not args.no_composition_features),
             use_ensemble=args.use_ensemble,
             use_bootstrap_ci=args.use_bootstrap_ci,
             export_excel=args.export_excel,

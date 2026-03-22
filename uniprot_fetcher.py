@@ -261,6 +261,15 @@ def fetch_sequences_for_fireprot(
         
         # Keep only rows with valid sequences and DDG values
         chunk = chunk[chunk['sequence'].notna() & chunk['DDG'].notna()].copy()
+
+        # Hard cap to avoid overshooting `max_rows` due to chunk-size filtering.
+        # Without this, `max_rows` can overshoot by up to `chunk_size`.
+        if max_rows and len(chunk) > 0:
+            remaining = max_rows - total_processed
+            if remaining <= 0:
+                break
+            if len(chunk) > remaining:
+                chunk = chunk.iloc[:remaining].copy()
         
         if len(chunk) > 0:
             chunks_with_sequences.append(chunk)

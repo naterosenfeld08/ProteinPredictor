@@ -28,6 +28,9 @@ wheels/
 results/
 embeddings_cache/
 training_output/
+# Same artifacts folder when checked out with this exact name (spaces + note)
+training_output (CRITICAL DIRECTORY DO NOT TOUCH)/
+uniprot_cache/
 validation_output/
 *.pkl
 *.npy

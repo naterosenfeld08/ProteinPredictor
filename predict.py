@@ -132,6 +132,7 @@ def handle_fasta(args: argparse.Namespace) -> None:
             output_path=str(output_path),
             min_length=args.min_length,
             max_length=args.max_length,
+            use_composition_features=not args.no_composition_features,
         )
     except Exception as exc:
         print(f"\nERROR: {exc}")
@@ -303,6 +304,11 @@ Examples:
     )
     fasta_parser.add_argument(
         "--max_length", type=int, default=5000, help="Maximum sequence length"
+    )
+    fasta_parser.add_argument(
+        "--no_composition_features",
+        action="store_true",
+        help="Disable amino acid composition feature augmentation",
     )
     fasta_parser.set_defaults(func=handle_fasta)
 

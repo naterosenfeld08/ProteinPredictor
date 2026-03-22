@@ -1,0 +1,31 @@
+# Protected positions (0-based) for petase_6eqd_chainA_notag.fasta
+# Mapped from PDB 6EQD chain A: FASTA[0:28] = N-term not in crystal; structure aligns from FASTA index 28 == PDB resseq 29.
+#
+# Catalytic triad (canonical IsPETase):
+159   # PDB Ser160 — nucleophile
+205   # PDB Asp206
+236   # PDB His237
+#
+# Substrate tunnel / oxyanion / aromatics (literature on IsPETase; same PDB numbering)
+55    # PDB Trp56 — tunnel
+63    # PDB Phe64
+71    # PDB Met72 — near active site
+86    # PDB Tyr87
+93    # PDB Asp94
+103   # PDB Arg104
+116   # PDB Leu117
+125   # PDB Phe126
+126   # PDB Tyr127
+131   # PDB Met132
+136   # PDB Phe137
+158   # PDB Trp159 — stacking
+171   # PDB Asn172 — oxyanion hole region
+178   # PDB Ile179
+179   # PDB Ala180
+184   # PDB Trp185 — oxyanion / aromatic
+237   # PDB Ser238 — adjacent to His237
+241   # PDB Asp242
+#
+# Lid / loop region often coupled to activity (restrict arbitrary mutation)
+100   # PDB residue 101
+101   # PDB residue 102

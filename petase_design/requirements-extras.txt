@@ -1,0 +1,5 @@
+# Optional extras for PETase design loop (install on top of main requirements.txt)
+# pip install -r petase_design/requirements-extras.txt
+
+biopython>=1.81
+freesasa>=2.2.0

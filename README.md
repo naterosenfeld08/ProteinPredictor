@@ -479,6 +479,18 @@ python predict.py --fasta sequences.fasta \
 
 Use `--no_composition_features` only if that model was trained without composition features (default: **on**; matches `feature_dim` 2344 = ProtT5 + ESM-2 + 20 AA composition).
 
+### PETase thermostability — design loop (experimental)
+
+In-silico loop for **theoretical IsPETase-like variants**: random mutations → (optional) structure prediction → **physics-informed sequence score** (hydropathy, charge, aromatics, active-site protection, optional compactness from PDB).
+
+- **Plan:** [`docs/PETASE_THERMOSTABILITY_DESIGN.md`](docs/PETASE_THERMOSTABILITY_DESIGN.md)
+- **WT reference:** `petase_design/data/petase_6eqd_chainA_notag.fasta` (PDB 6EQD, His-tag removed)
+- **Run:** `python -m petase_design.run --cycles 100 --mutations 3 --out petase_design_runs/log.jsonl`
+- **Local ColabFold:** `python -m petase_design.run --colabfold --cycles …` (needs `colabfold_batch` on `PATH`; see [`docs/COLABFOLD_LOCAL.md`](docs/COLABFOLD_LOCAL.md))
+- **Next hooks:** SASA (`freesasa`), **OpenMM** minimization stub in `petase_design/openmm_energy.py`
+
+Scores are **proxies**, not measured Tm — validate top candidates experimentally.
+
 ### Evaluation
 
 ```bash

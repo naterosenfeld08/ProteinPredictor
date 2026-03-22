@@ -1,0 +1,8 @@
+# One 0-based residue index per line (sequence must match petase_6eqd_chainA_notag.fasta).
+# Copy to active_site_indices_0based.txt and fill after aligning 6EQD / literature to THIS sequence.
+# These positions get a penalty if mutated (preserve catalytic pocket / substrate channel).
+#
+# Example (PLACEHOLDERS — replace with real indices):
+# 159
+# 206
+# 237

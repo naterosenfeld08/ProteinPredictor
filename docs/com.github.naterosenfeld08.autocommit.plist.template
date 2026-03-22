@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.github.naterosenfeld08.autocommit</string>
+
+	<key>ProgramArguments</key>
+	<array>
+		<string>/bin/bash</string>
+		<string>-lc</string>
+		<string>export AUTO_COMMIT_REPO_DIR=$HOME/Developer/daily-activity; export PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin; exec /Users/YOURUSERNAME/ProteinPredictor/scripts/auto_contribution_commit.sh</string>
+	</array>
+
+	<!-- Every day at 12:00 local time -->
+	<key>StartCalendarInterval</key>
+	<dict>
+		<key>Hour</key>
+		<integer>12</integer>
+		<key>Minute</key>
+		<integer>0</integer>
+	</dict>
+
+	<key>StandardOutPath</key>
+	<string>/Users/YOURUSERNAME/.local/share/auto_commit.log</string>
+	<key>StandardErrorPath</key>
+	<string>/Users/YOURUSERNAME/.local/share/auto_commit.err</string>
+</dict>
+</plist>

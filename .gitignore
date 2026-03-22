@@ -24,6 +24,9 @@ wheels/
 .installed.cfg
 *.egg
 
+# PETase design loop outputs
+petase_design_runs/
+
 # Results and cache
 results/
 embeddings_cache/

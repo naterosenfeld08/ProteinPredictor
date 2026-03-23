@@ -462,6 +462,26 @@ python predict.py --sequence "MKTAYIAKQR..." --model_path models/baseline_ensemb
 python predict.py --fasta sequences.fasta --model_path models/baseline_ensemble.pkl
 ```
 
+### Web GUI (Streamlit)
+
+Run from the **repository root** (after `pip install -r requirements.txt`):
+
+```bash
+streamlit run gui/app.py
+```
+
+Your browser opens to a local app with three tabs:
+
+1. **ΔΔG predict** — paste a sequence, pick the trained `.pkl`, run (uses the same embedding + composition path as `predict.py`).
+2. **PETase design** — set cycles / mutations / output JSONL; optional **ColabFold** (slow).
+3. **Browse JSONL** — load a design log and sort/filter in a table.
+
+**Tip:** On macOS you can double-click **`scripts/launch_gui.command`** (activates `venv/` if present, then runs Streamlit). Or run the `streamlit` line from any terminal.
+
+**If the browser says “Is Streamlit still running?”:** long embeddings used to block the Streamlit process. The GUI now runs **ΔΔG prediction** and **PETase design** in **separate Python subprocesses** (`gui/predict_worker.py`, `gui/design_worker.py`) so the server stays responsive. **Watch the terminal** where `streamlit run` is running for Hugging Face / model download and embedding logs. Keep the tab open until the green success message appears.
+
+**If the UI says the worker crashed with signal 11 (SIGSEGV):** common on macOS when Hugging Face **tokenizers** use parallel threads together with PyTorch / OpenMP. The workers call `gui/worker_env.py` to set `TOKENIZERS_PARALLELISM=false`, single-threaded BLAS, and `KMP_DUPLICATE_LIB_OK=TRUE` before loading models. Restart Streamlit and retry; you can export the same variables in your shell before `streamlit run` if needed.
+
 #### MLP + Random Forest ensemble (ProtT5 + ESM-2, full FireProtDB train)
 
 After training with `train_mlp_rf_ensemble.py` (`--embedding_model_type both`), artifacts are saved under:

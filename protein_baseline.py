@@ -30,7 +30,21 @@ from sklearn.metrics import (
 from scipy.stats import pearsonr, spearmanr
 from scipy.spatial.distance import pdist, squareform
 from scipy.cluster.hierarchy import linkage, dendrogram
-import xgboost as xgb
+try:
+    import xgboost as xgb
+
+    XGBOOST_AVAILABLE = True
+except Exception:
+    # macOS: XGBoost needs OpenMP (libomp). `brew install libomp` fixes it.
+    # Inference paths (e.g. MLP+RF ensemble) do not require XGBoost.
+    xgb = None  # type: ignore[assignment, misc]
+    XGBOOST_AVAILABLE = False
+
+# Tuple for isinstance() when XGBoost failed to load (empty tuple => no matches)
+_XGB_MODEL_TYPES: Tuple[type, ...] = (
+    (xgb.XGBRegressor, xgb.XGBClassifier) if XGBOOST_AVAILABLE else ()
+)
+
 try:
     import optuna
     OPTUNA_AVAILABLE = True
@@ -507,18 +521,20 @@ def run_cross_validation(
     
     if is_classification:
         models = {
-            'xgboost': xgb.XGBClassifier(random_state=42, eval_metric='logloss'),
             'random_forest': RandomForestClassifier(n_estimators=100, random_state=42)
         }
+        if XGBOOST_AVAILABLE:
+            models['xgboost'] = xgb.XGBClassifier(random_state=42, eval_metric='logloss')
         scoring = {
             'accuracy': 'accuracy',
             'f1': make_scorer(f1_score, average='weighted')
         }
     else:
         models = {
-            'xgboost': xgb.XGBRegressor(random_state=42),
             'random_forest': RandomForestRegressor(n_estimators=100, random_state=42)
         }
+        if XGBOOST_AVAILABLE:
+            models['xgboost'] = xgb.XGBRegressor(random_state=42)
         scoring = {
             'mae': 'neg_mean_absolute_error',
             'rmse': 'neg_root_mean_squared_error',
@@ -826,8 +842,9 @@ def predict_from_fasta(
             json.dump(results, f, indent=2)
         logger.info(f"Saved predictions to {output_path}")
         print(f"Saved predictions to {output_path}")
-        
-        return results
+
+    # Always return results (callers like gui/predict_worker use output_path=None).
+    return results
 
 
 def predict_single_sequence_with_outputs(
@@ -1836,7 +1853,12 @@ def tune_hyperparameters(
     """
     if not OPTUNA_AVAILABLE:
         raise ImportError("optuna is required for hyperparameter tuning. Install with: pip install optuna")
-    
+    if model_type == 'xgboost' and not XGBOOST_AVAILABLE:
+        raise ImportError(
+            "XGBoost is not available. On macOS install OpenMP: brew install libomp "
+            "(then restart the terminal). Or use hyperparameter tuning for random_forest only."
+        )
+
     def objective(trial):
         if model_type == 'xgboost':
             if is_classification:
@@ -2197,7 +2219,7 @@ def predict_with_uncertainty(
         pred_mean = np.mean(predictions_per_tree, axis=0)
         pred_std = np.std(predictions_per_tree, axis=0)
         return pred_mean, pred_std
-    elif use_bootstrap and isinstance(model, (xgb.XGBRegressor, xgb.XGBClassifier)):
+    elif use_bootstrap and isinstance(model, _XGB_MODEL_TYPES):
         # For XGBoost: use bootstrap confidence intervals
         pred_mean, pred_lower, pred_upper = compute_bootstrap_confidence_intervals(
             model, X, n_bootstrap=n_bootstrap
@@ -2526,17 +2548,21 @@ def train_baseline_models(
         xgb_params = best_params.get('xgboost', {}) if best_params else {}
         rf_params = best_params.get('random_forest', {}) if best_params else {}
         models = {
-            'xgboost': xgb.XGBClassifier(random_state=42, eval_metric='logloss', **xgb_params),
             'random_forest': RandomForestClassifier(n_estimators=100, random_state=42, **rf_params)
         }
+        if XGBOOST_AVAILABLE:
+            models['xgboost'] = xgb.XGBClassifier(
+                random_state=42, eval_metric='logloss', **xgb_params
+            )
     else:
         # Regression models - only XGBoost and Random Forest for comparison
         xgb_params = best_params.get('xgboost', {}) if best_params else {}
         rf_params = best_params.get('random_forest', {}) if best_params else {}
         models = {
-            'xgboost': xgb.XGBRegressor(random_state=42, **xgb_params),
             'random_forest': RandomForestRegressor(n_estimators=100, random_state=42, **rf_params)
         }
+        if XGBOOST_AVAILABLE:
+            models['xgboost'] = xgb.XGBRegressor(random_state=42, **xgb_params)
     
     model_scores = {}  # For selecting best model
     
@@ -3057,7 +3083,10 @@ def main(
         print("\n" + "="*60)
         print("HYPERPARAMETER TUNING")
         print("="*60)
-        for model_type_name in ['xgboost', 'random_forest']:
+        tune_types = ['random_forest']
+        if XGBOOST_AVAILABLE:
+            tune_types.insert(0, 'xgboost')
+        for model_type_name in tune_types:
             print(f"\nTuning {model_type_name}...")
             tuning_results = tune_hyperparameters(
                 X_train, y_train, model_type_name, is_classification, n_trials
@@ -3128,8 +3157,10 @@ def main(
                     print(f"  Skipping {prop_col}: No valid data")
                     continue
                 
-                # Use the best model (XGBoost) for quick prediction
-                best_model_name = 'xgboost'
+                # Prefer XGBoost when available, else Random Forest
+                best_model_name = 'xgboost' if XGBOOST_AVAILABLE else 'random_forest'
+                if best_model_name not in trained_models:
+                    best_model_name = 'random_forest'
                 if best_model_name in trained_models:
                     model = trained_models[best_model_name]
                     
@@ -3148,7 +3179,14 @@ def main(
                             X_train_prop, X_test_prop, y_train_prop, y_test_prop = train_test_split(
                                 X_prop, y_prop_encoded, test_size=0.2, random_state=42, stratify=y_prop_encoded
                             )
-                            model_prop = xgb.XGBClassifier(random_state=42, eval_metric='logloss')
+                            if XGBOOST_AVAILABLE:
+                                model_prop = xgb.XGBClassifier(
+                                    random_state=42, eval_metric='logloss'
+                                )
+                            else:
+                                model_prop = RandomForestClassifier(
+                                    n_estimators=100, random_state=42
+                                )
                             model_prop.fit(X_train_prop, y_train_prop)
                             y_pred_prop = model_prop.predict(X_prop)
                     else:

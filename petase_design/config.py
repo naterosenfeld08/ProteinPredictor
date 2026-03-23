@@ -14,9 +14,10 @@ ACTIVE_SITE_SHELL_ANGSTROM = 10.0
 
 # Composite score weights (tunable; keys must match petase_design.physics_score.score_sequence_physics)
 WEIGHTS = {
-    "hydrophobic_core_proxy": 0.35,
-    "charge_balance": 0.15,
-    "aromatic": 0.1,
-    "active_site": 0.25,
-    "compactness": 0.15,
+    "hydrophobic_core_proxy": 0.28,
+    "charge_balance": 0.14,
+    "aromatic": 0.08,
+    "active_site": 0.23,
+    "compactness": 0.13,
+    "sasa_burial": 0.14,
 }

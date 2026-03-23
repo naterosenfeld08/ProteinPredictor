@@ -17,8 +17,17 @@ import tempfile
 import time
 from pathlib import Path
 
+# Repo root on sys.path *before* `from gui.*` (Streamlit loads this file with cwd ≠ repo).
+REPO_ROOT = Path(__file__).resolve().parent.parent
+_REPO_STR = str(REPO_ROOT)
+if _REPO_STR not in sys.path:
+    sys.path.insert(0, _REPO_STR)
+
 import pandas as pd
 import streamlit as st
+
+from gui.insights import render_fireprot_honesty_callout, render_prediction_analytics
+from gui.structure_view import render_structure_panel
 
 
 def _poll_subprocess_with_ui(
@@ -37,12 +46,12 @@ def _poll_subprocess_with_ui(
     """
     slot = st.empty()
     started = time.monotonic()
-    pulse = 0
+    tick = 0
     while proc.poll() is None:
         time.sleep(0.5)
-        pulse += 1
+        tick += 1
         elapsed = time.monotonic() - started
-        dots = "." * (1 + (pulse % 3))
+        dots = "." * (1 + (tick % 3))
         extra = f"  \n{hint_terminal}" if hint_terminal else ""
         slot.info(
             f"**{title}**{dots}  \n"
@@ -54,13 +63,6 @@ def _poll_subprocess_with_ui(
         )
     slot.empty()
     return int(proc.returncode or 0)
-
-# Repo root = parent of gui/ — must be on path so `protein_baseline` / `petase_design` import
-# when Streamlit’s cwd or module path differs (e.g. double-click .command).
-REPO_ROOT = Path(__file__).resolve().parent.parent
-_REPO_STR = str(REPO_ROOT)
-if _REPO_STR not in sys.path:
-    sys.path.insert(0, _REPO_STR)
 
 
 def _default_model_path() -> str:
@@ -79,6 +81,7 @@ def _default_model_path() -> str:
 
 def tab_predict() -> None:
     st.subheader("Predict ΔΔG (stability change)")
+    render_fireprot_honesty_callout()
     st.caption(
         "Uses your trained ensemble + PLM embeddings. First run may download "
         "ProtT5/ESM weights and can take several minutes."
@@ -237,7 +240,9 @@ def tab_predict() -> None:
             lo = p0["pred_value"] - 1.96 * u
             hi = p0["pred_value"] + 1.96 * u
             st.caption(f"Approx. 95% interval (RF tree spread): [{lo:.4f}, {hi:.4f}]")
-        st.json(p0)
+        render_prediction_analytics(p0, seq_name=seq_name, seq_len=len(seq))
+        with st.expander("Raw prediction JSON", expanded=False):
+            st.json(p0)
         st.session_state["last_prediction"] = {
             "pred_value": float(p0["pred_value"]),
             "name": seq_name,
@@ -371,6 +376,28 @@ def tab_petase() -> None:
             st.dataframe(pd.json_normalize(rows).head(20), use_container_width=True)
 
 
+def tab_structure() -> None:
+    st.subheader("Structure viewer (optional)")
+    st.caption(
+        "**PyMOL** is a separate desktop app; this tab gives you an **in-browser** preview (py3Dmol) "
+        "plus a small **PyMOL script** you can run locally. It does **not** change ΔΔG predictions."
+    )
+    up = st.file_uploader("Upload PDB", type=["pdb", "ent"], key="pdb_upload")
+    if up is not None:
+        text = up.getvalue().decode("utf-8", errors="replace")
+        if "ATOM" not in text and "HETATM" not in text:
+            st.error("File does not look like PDB (no ATOM/HETATM records).")
+            return
+        render_structure_panel(text, key_prefix="main")
+        st.download_button(
+            "Download uploaded PDB",
+            data=text.encode("utf-8"),
+            file_name=up.name or "structure.pdb",
+            mime="chemical/x-pdb",
+            key="dl_pdb",
+        )
+
+
 def tab_jsonl() -> None:
     st.subheader("Browse a design JSONL log")
     path = st.text_input(
@@ -428,13 +455,17 @@ def main() -> None:
         "but model/FASTA paths are easiest if relative to this folder."
     )
 
-    tab1, tab2, tab3 = st.tabs(["ΔΔG predict", "PETase design", "Browse JSONL"])
+    tab1, tab2, tab3, tab4 = st.tabs(
+        ["ΔΔG predict", "PETase design", "Browse JSONL", "Structure"]
+    )
     with tab1:
         tab_predict()
     with tab2:
         tab_petase()
     with tab3:
         tab_jsonl()
+    with tab4:
+        tab_structure()
 
 
 if __name__ == "__main__":

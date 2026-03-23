@@ -26,6 +26,13 @@ This project uses **fixed-dimensional embeddings** extracted from pretrained pro
 3. **Interpretability**: Tabular features are easier to analyze than sequence models
 4. **Scalability**: Once computed, embeddings can be reused across experiments
 
+### Limitations & priors (read before interpreting outputs)
+
+- **FireProt ΔΔG models** learn a mapping from **PLM embeddings (+ composition)** to **experimental mutation ΔΔG** aggregated across **many proteins**. They are **not** PETase-specific unless you **retrain** on PETase mutants.
+- **Paste-a-sequence inference** returns a value on the **same scale as training**; it is a **weak, generic stability prior** for screening/ranking under a **fixed protocol**, not a substitute for **measured ΔΔG**, **Tm**, or **activity**.
+- **RF “uncertainty”** is **spread across trees**, not experimental error; wide intervals mean **ambiguous** embeddings for this task, not “lab ±σ”.
+- More detail: [`docs/LIMITATIONS_AND_PRIORS.md`](docs/LIMITATIONS_AND_PRIORS.md).
+
 ## Dataset
 
 ### Source
@@ -438,7 +445,8 @@ pip install -r requirements.txt
 - **xgboost**: Gradient boosting for XGBoost model
 - **numpy, pandas**: Numerical computing and data manipulation
 - **matplotlib, seaborn**: Visualization
-- **streamlit**: Web application framework (optional, for GUI)
+- **streamlit**: Web application framework (GUI)
+- **py3dmol**: In-browser protein structure preview in the Streamlit **Structure** tab
 
 ## Usage
 
@@ -455,11 +463,11 @@ python scripts/train.py --model mlp --data_path fireprotdb_with_sequences.csv
 ### Making Predictions
 
 ```bash
-# Single sequence prediction
-python predict.py --sequence "MKTAYIAKQR..." --model_path models/baseline_ensemble.pkl
-
 # Batch prediction from FASTA
-python predict.py --fasta sequences.fasta --model_path models/baseline_ensemble.pkl
+python predict.py fasta sequences.fasta --model_path models/baseline_ensemble.pkl
+
+# Single sequence (sequence mode)
+python predict.py sequences --sequence "MKTAYIAKQR..." --name Protein1 --model_path models/baseline_ensemble.pkl
 ```
 
 ### Web GUI (Streamlit)
@@ -470,11 +478,12 @@ Run from the **repository root** (after `pip install -r requirements.txt`):
 streamlit run gui/app.py
 ```
 
-Your browser opens to a local app with three tabs:
+Your browser opens to a local app with **four** tabs:
 
-1. **ΔΔG predict** — paste a sequence, pick the trained `.pkl`, run (uses the same embedding + composition path as `predict.py`).
+1. **ΔΔG predict** — paste a sequence, pick the trained `.pkl`, run; includes **FireProt honesty** callout, **z-score vs training stats**, and **uncertainty analysis** (same embedding path as `predict.py fasta`).
 2. **PETase design** — set cycles / mutations / output JSONL; optional **ColabFold** (slow).
 3. **Browse JSONL** — load a design log and sort/filter in a table.
+4. **Structure** — upload a **PDB** for **py3Dmol** in-browser preview (requires `py3dmol` in `requirements.txt`) and download a small **PyMOL** loader script for desktop viewing.
 
 **Tip:** On macOS you can double-click **`scripts/launch_gui.command`** (activates `venv/` if present, then runs Streamlit). Or run the `streamlit` line from any terminal.
 
@@ -493,7 +502,7 @@ After training with `train_mlp_rf_ensemble.py` (`--embedding_model_type both`), 
 Example (quote paths with spaces):
 
 ```bash
-python predict.py --fasta sequences.fasta \
+python predict.py fasta sequences.fasta \
   --model_path "training_output (CRITICAL DIRECTORY DO NOT TOUCH)/mlp_rf_ensemble_full_both/mlp_rf_ensemble.pkl"
 ```
 
@@ -501,13 +510,14 @@ Use `--no_composition_features` only if that model was trained without compositi
 
 ### PETase thermostability — design loop (experimental)
 
-In-silico loop for **theoretical IsPETase-like variants**: random mutations → (optional) structure prediction → **physics-informed sequence score** (hydropathy, charge, aromatics, active-site protection, optional compactness from PDB).
+In-silico loop for **theoretical IsPETase-like variants**: random mutations → (optional) structure prediction → **physics-informed score** (hydropathy, charge, aromatics, active-site protection, compactness from PDB, **optional SASA** when `freesasa` is installed).
 
 - **Plan:** [`docs/PETASE_THERMOSTABILITY_DESIGN.md`](docs/PETASE_THERMOSTABILITY_DESIGN.md)
 - **WT reference:** `petase_design/data/petase_6eqd_chainA_notag.fasta` (PDB 6EQD, His-tag removed)
 - **Run:** `python -m petase_design.run --cycles 100 --mutations 3 --out petase_design_runs/log.jsonl`
 - **Local ColabFold:** `python -m petase_design.run --colabfold --cycles …` (needs `colabfold_batch` on `PATH`; see [`docs/COLABFOLD_LOCAL.md`](docs/COLABFOLD_LOCAL.md))
-- **Next hooks:** SASA (`freesasa`), **OpenMM** minimization stub in `petase_design/openmm_energy.py`
+- **SASA (P2):** `pip install -r petase_design/requirements-extras.txt` — when a ranked **PDB** exists, `physics_score` adds **FreeSASA** polar/apolar breakdown into the composite (`petase_design/sasa_utils.py`).
+- **Next hooks:** **OpenMM** minimization stub in `petase_design/openmm_energy.py`
 
 Scores are **proxies**, not measured Tm — validate top candidates experimentally.
 

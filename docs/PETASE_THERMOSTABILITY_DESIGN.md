@@ -26,7 +26,7 @@ Goal: **Option C** — a generation loop that proposes **theoretical PETase vari
 2. **Structure:** **ColabFold** or local **AlphaFold2** — same protocol for all candidates (reproducibility).
 3. **Physics layer (this is what makes “weak AF-only” stronger):**
    - **Tier 0 (implemented stub):** geometry proxies — compactness, local contact density near active-site shell (user-defined residues), clash proxy from van der Waals overlap counts (crude).
-   - **Tier 1:** **SASA** (e.g. `freesasa`) — burial / exposed hydrophobic surface (thermostability often reduces unnecessary exposed hydrophobics).
+   - **Tier 1:** **SASA** (`freesasa`, optional install) — **implemented:** polar/apolar classification via `freesasa.classifyResults` on ranked PDBs; feeds `apolar_sasa_fraction` + `sasa_total_area` in `PhysicsBreakdown` and the composite (`petase_design/sasa_utils.py`).
    - **Tier 2:** **Molecular mechanics** — short **OpenMM** minimization + energy components (electrostatics, bonded strain) on a fixed FF (AMBER/CHARMM via OpenFF pipeline is possible but heavier).
    - **Tier 3:** **Rosetta / FoldX**-class ΔΔG or stability metrics (licensing + install separate).
 4. **ML layer (your existing stack):** optional **ΔΔG head** or **ranking** using PLM embeddings + composition (+ later structural descriptors) — trained on FireProt is **not** PET-specific; use as a **weak prior** or retrain on PETase mutants when you have data.
@@ -47,7 +47,7 @@ Goal: **Option C** — a generation loop that proposes **theoretical PETase vari
 |-------|-------------|
 | **P0** | `petase_design/` package: load WT, mutate, composite **sequence + stub structure** scoring, JSONL logging, Pareto archive |
 | **P1** | **ColabFold local** — `ColabFoldLocalRunner` + `--colabfold` on `petase_design.run` (see `docs/COLABFOLD_LOCAL.md`) |
-| **P2** | Add **freesasa** + **pyyaml** optional deps; SASA-based terms |
+| **P2** | **Done (this repo):** **freesasa** optional dep (`petase_design/requirements-extras.txt`); SASA polar/apolar terms in `physics_score` when PDB path is valid |
 | **P3** | **OpenMM** energy minimization + component breakdown |
 | **P4** | Active-site **restraints** + literature mutation priors (e.g. ThermoPET, known stabilizing sites) |
 

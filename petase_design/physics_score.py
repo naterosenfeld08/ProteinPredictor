@@ -4,7 +4,8 @@ from __future__ import annotations
 Physics-informed and geometry proxies for thermostability screening.
 
 Tier 0: sequence-only (hydropathy, charge, aromatics, active-site protection).
-Tier 1: optional PDB Cα — radius of gyration, mean Cα–Cα distance in a shell (needs coords + active site index).
+Tier 1: optional PDB — Cα radius of gyration (compactness) + **FreeSASA** polar/apolar SASA when
+`freesasa` is installed (`petase_design/requirements-extras.txt`).
 """
 
 from dataclasses import dataclass
@@ -14,6 +15,7 @@ from typing import Iterable
 import math
 
 from petase_design.sequence_utils import KD_HYDROPATHY, mutation_diff
+from petase_design.sasa_utils import compute_sasa_breakdown
 
 
 @dataclass
@@ -23,6 +25,9 @@ class PhysicsBreakdown:
     aromatic_fraction: float
     active_site_violation: float
     radius_of_gyration: float | None
+    # FreeSASA (optional): total SASA Å²; apolar fraction = Apolar / (Polar+Apolar+Unknown)
+    sasa_total_area: float | None
+    apolar_sasa_fraction: float | None
     mutation_count: int
     composite: float
 
@@ -127,11 +132,12 @@ def score_sequence_physics(
     - If structure_pdb given, lower Rg slightly rewarded (compactness proxy).
     """
     w = weights or {
-        "hydrophobic_core_proxy": 0.35,
-        "charge_balance": 0.15,
-        "aromatic": 0.1,
-        "active_site": 0.25,
-        "compactness": 0.15,
+        "hydrophobic_core_proxy": 0.28,
+        "charge_balance": 0.14,
+        "aromatic": 0.08,
+        "active_site": 0.23,
+        "compactness": 0.13,
+        "sasa_burial": 0.14,
     }
 
     mh = _mean_kd(variant)
@@ -148,6 +154,10 @@ def score_sequence_physics(
     active_score = 1.0 / (1.0 + asp)
     rg: float | None = None
     compact_score = 0.5
+    sasa_total: float | None = None
+    apolar_frac: float | None = None
+    sasa_score = 0.5  # neutral if no structure / no freesasa
+
     if structure_pdb and structure_pdb.is_file():
         parsed = parse_pdb_ca_coords(structure_pdb)
         xyz = [t[3] for t in parsed]
@@ -156,12 +166,22 @@ def score_sequence_physics(
             # Smaller Rg → higher score, saturate
             compact_score = 1.0 / (1.0 + rg / 20.0)
 
+        sb = compute_sasa_breakdown(structure_pdb)
+        if sb is not None:
+            sasa_total = sb.total_area
+            apolar_frac = sb.apolar_fraction
+            # More exposed apolar SASA → lower burial proxy (penalize high apolar fraction).
+            sasa_score = max(0.0, min(1.0, 1.25 - 1.5 * apolar_frac))
+
+    w_sasa = float(w.get("sasa_burial", 0.0))
+
     composite = (
         w["hydrophobic_core_proxy"] * hydro_score
         + w["charge_balance"] * charge_score
-        + w.get("aromatic", 0.1) * arom_score
+        + w.get("aromatic", 0.08) * arom_score
         + w["active_site"] * active_score
-        + w.get("compactness", 0.15) * compact_score
+        + w.get("compactness", 0.13) * compact_score
+        + w_sasa * sasa_score
         - 0.02 * n_mut
     )
 
@@ -171,6 +191,8 @@ def score_sequence_physics(
         aromatic_fraction=ar,
         active_site_violation=asp,
         radius_of_gyration=rg,
+        sasa_total_area=sasa_total,
+        apolar_sasa_fraction=apolar_frac,
         mutation_count=n_mut,
         composite=float(composite),
     )

@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import json
 import random
+import time
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
 from petase_design import config
+from petase_design.run_summary import write_run_summary_json
 from petase_design.mutagenesis import propose_random_mutations, variant_from_mutations
 from petase_design.physics_score import score_sequence_physics
 from petase_design.sequence_utils import load_fasta_sequence
@@ -45,6 +47,7 @@ def run_design_cycles(
       - Two-stage: if structure_top_k is set (>0), do cheap sequence-only scoring first for
         all variants, then run structure prediction only for the top-K by composite.
     """
+    t_wall0 = time.time()
     rng = random.Random(seed)
     _, wt = load_fasta_sequence(wt_fasta)
     protected = load_protected_indices()
@@ -113,5 +116,21 @@ def run_design_cycles(
     with out_jsonl.open("w", encoding="utf-8") as f:
         for row in rows:
             f.write(json.dumps(row) + "\n")
+
+    t_wall1 = time.time()
+    summary_meta = {
+        "wt_fasta": str(wt_fasta),
+        "n_cycles": n_cycles,
+        "mutations_per_variant": mutations_per_variant,
+        "seed": seed,
+        "structure_top_k": structure_top_k,
+    }
+    write_run_summary_json(
+        out_jsonl,
+        rows,
+        t0=t_wall0,
+        t1=t_wall1,
+        meta=summary_meta,
+    )
 
     return rows

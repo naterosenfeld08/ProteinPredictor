@@ -50,6 +50,8 @@ class ColabFoldLocalRunner(StructureRunner):
     binary: str = "colabfold_batch"
     num_recycle: int = 3
     use_amber: bool = False
+    #: Passes ``--overwrite-existing-results`` to ``colabfold_batch`` (recompute even if cached).
+    overwrite_existing: bool = False
     extra_args: tuple[str, ...] = field(default_factory=tuple)
     env: dict[str, str] | None = None
 
@@ -84,6 +86,8 @@ class ColabFoldLocalRunner(StructureRunner):
         ]
         if self.use_amber:
             cmd.append("--amber")
+        if self.overwrite_existing:
+            cmd.append("--overwrite-existing-results")
         cmd.extend(self.extra_args)
 
         run_env = os.environ.copy()

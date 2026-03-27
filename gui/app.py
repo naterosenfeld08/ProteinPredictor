@@ -337,6 +337,12 @@ def tab_petase() -> None:
     cf_bin = st.text_input("colabfold_batch command", value="colabfold_batch")
     num_recycle = st.number_input("ColabFold num-recycle", min_value=0, max_value=12, value=3)
     use_amber = st.checkbox("ColabFold --amber (OpenMM relax)", value=False)
+    cf_overwrite = st.checkbox(
+        "ColabFold overwrite existing results",
+        value=False,
+        disabled=not use_cf,
+        help="Passes --overwrite-existing-results to colabfold_batch (recompute even if cached).",
+    )
 
     if st.button("Run design loop", type="primary"):
         wt_p = Path(wt)
@@ -385,6 +391,8 @@ def tab_petase() -> None:
                 cmd.extend(["--structure-top-k", str(int(top_k))])
             if use_amber:
                 cmd.append("--amber")
+            if cf_overwrite:
+                cmd.append("--colabfold-overwrite")
 
         try:
             proc = subprocess.Popen(cmd, cwd=str(REPO_ROOT))

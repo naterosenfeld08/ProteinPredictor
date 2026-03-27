@@ -42,6 +42,11 @@ def main() -> int:
         default="",
         help="Extra shell string passed to shlex.split for colabfold_batch",
     )
+    ap.add_argument(
+        "--colabfold-overwrite",
+        action="store_true",
+        help="Pass --overwrite-existing-results to colabfold_batch",
+    )
     args = ap.parse_args()
     if args.structure_top_k is not None and int(args.structure_top_k) <= 0:
         raise SystemExit("--structure-top-k must be a positive integer.")
@@ -63,6 +68,7 @@ def main() -> int:
                 binary=args.colabfold_bin,
                 num_recycle=int(args.num_recycle),
                 use_amber=bool(args.amber),
+                overwrite_existing=bool(args.colabfold_overwrite),
                 extra_args=extra,
             )
         else:

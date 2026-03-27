@@ -66,6 +66,11 @@ def main() -> None:
         default="",
         help='Extra args as one shell string, e.g. --colabfold-extra "--max-msa 512:1024"',
     )
+    ap.add_argument(
+        "--colabfold-overwrite",
+        action="store_true",
+        help="Pass --overwrite-existing-results to colabfold_batch (re-run even if outputs exist)",
+    )
     args = ap.parse_args()
 
     if not args.wt_fasta.is_file():
@@ -82,6 +87,7 @@ def main() -> None:
             binary=args.colabfold_bin,
             num_recycle=args.num_recycle,
             use_amber=args.amber,
+            overwrite_existing=bool(args.colabfold_overwrite),
             extra_args=tuple(extra),
         )
     else:
@@ -109,6 +115,7 @@ def main() -> None:
         structure_top_k=args.structure_top_k if args.colabfold else None,
     )
     print(f"Wrote {args.cycles} variants to {args.out}", flush=True)
+    print(f"Run summary: {args.out.parent / 'run_summary.json'}", flush=True)
     print("Tip: fill petase_design/data/active_site_indices_0based.txt to protect catalytic pocket.")
 
 

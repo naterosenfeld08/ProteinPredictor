@@ -30,6 +30,12 @@ def main() -> int:
     ap.add_argument("--colabfold", action="store_true")
     ap.add_argument("--colabfold-bin", default="colabfold_batch")
     ap.add_argument("--num-recycle", type=int, default=3)
+    ap.add_argument(
+        "--structure-top-k",
+        type=int,
+        default=None,
+        help="Two-stage mode: structure only for top-K by cheap composite",
+    )
     ap.add_argument("--amber", action="store_true")
     ap.add_argument(
         "--colabfold-extra",
@@ -37,6 +43,8 @@ def main() -> int:
         help="Extra shell string passed to shlex.split for colabfold_batch",
     )
     args = ap.parse_args()
+    if args.structure_top_k is not None and int(args.structure_top_k) <= 0:
+        raise SystemExit("--structure-top-k must be a positive integer.")
 
     # PETase loop is mostly pure Python; env still helps if optional deps spawn threads.
     configure_worker_runtime_env()
@@ -71,6 +79,7 @@ def main() -> int:
             seed=int(args.seed),
             structure_runner=runner,
             work_root=args.work_root,
+            structure_top_k=args.structure_top_k if args.colabfold else None,
         )
         out_result.write_text(json.dumps(rows, default=str), encoding="utf-8")
         return 0

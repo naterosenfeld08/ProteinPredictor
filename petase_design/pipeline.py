@@ -35,9 +35,15 @@ def run_design_cycles(
     seed: int = 42,
     structure_runner: StructureRunner | None = None,
     work_root: Path | None = None,
+    structure_top_k: int | None = None,
 ) -> list[dict[str, Any]]:
     """
-    Propose random variants, score with physics proxy, append one JSON object per line.
+    Propose random variants and score with physics proxy.
+
+    Modes:
+      - Default: if structure_runner is ColabFold, each variant gets structure scoring.
+      - Two-stage: if structure_top_k is set (>0), do cheap sequence-only scoring first for
+        all variants, then run structure prediction only for the top-K by composite.
     """
     rng = random.Random(seed)
     _, wt = load_fasta_sequence(wt_fasta)
@@ -46,33 +52,66 @@ def run_design_cycles(
     work_root = work_root or Path("petase_design_runs") / "structures"
     work_root.mkdir(parents=True, exist_ok=True)
 
-    rows: list[dict[str, Any]] = []
     out_jsonl.parent.mkdir(parents=True, exist_ok=True)
+    rows: list[dict[str, Any]] = []
 
+    # Stage 1: cheap sequence-only scoring for every proposal.
     for t in range(n_cycles):
         muts = propose_random_mutations(
             wt, mutations_per_variant, rng=rng, protected_indices=protected
         )
         var = variant_from_mutations(wt, muts)
-        job_id = f"gen{t:05d}"
-        pdb = runner.predict(var, job_id, work_root / job_id)
-
         bd = score_sequence_physics(
             wt,
             var,
             protected_indices=protected,
-            structure_pdb=pdb,
+            structure_pdb=None,
             weights=dict(config.WEIGHTS),
         )
         row = {
             "generation": t,
+            "job_id": f"gen{t:05d}",
             "mutations": [{"index": i, "to": aa} for i, aa in muts],
             "sequence": var,
             "physics": asdict(bd),
-            "structure_pdb": str(pdb) if pdb else None,
+            "structure_pdb": None,
+            "selected_for_structure": False,
         }
         rows.append(row)
-        with out_jsonl.open("a", encoding="utf-8") as f:
+
+    # Stage 2 (optional): structure only for top-K by cheap composite.
+    use_two_stage = structure_top_k is not None and structure_top_k > 0
+    if use_two_stage:
+        k = min(int(structure_top_k), len(rows))
+        ranked = sorted(
+            enumerate(rows),
+            key=lambda it: float((it[1].get("physics") or {}).get("composite", float("-inf"))),
+            reverse=True,
+        )
+        chosen_idx = {idx for idx, _ in ranked[:k]}
+    else:
+        chosen_idx = set(range(len(rows)))
+
+    # If runner is NullStructureRunner, leave structure fields null.
+    if not isinstance(runner, NullStructureRunner):
+        for idx, row in enumerate(rows):
+            if idx not in chosen_idx:
+                continue
+            row["selected_for_structure"] = True
+            job_id = str(row["job_id"])
+            pdb = runner.predict(str(row["sequence"]), job_id, work_root / job_id)
+            bd = score_sequence_physics(
+                wt,
+                str(row["sequence"]),
+                protected_indices=protected,
+                structure_pdb=pdb,
+                weights=dict(config.WEIGHTS),
+            )
+            row["physics"] = asdict(bd)
+            row["structure_pdb"] = str(pdb) if pdb else None
+
+    with out_jsonl.open("w", encoding="utf-8") as f:
+        for row in rows:
             f.write(json.dumps(row) + "\n")
 
     return rows

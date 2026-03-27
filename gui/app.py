@@ -251,12 +251,58 @@ def tab_predict() -> None:
         }
 
 
+def _petase_results_dataframe(rows: list) -> pd.DataFrame:
+    """Column order: key structure / SASA / composite fields first, then the rest."""
+    df = pd.json_normalize(rows)
+    priority = [
+        "generation",
+        "selected_for_structure",
+        "structure_pdb",
+        "physics.composite",
+        "physics.sasa_total_area",
+        "physics.apolar_sasa_fraction",
+        "physics.radius_of_gyration",
+        "physics.mutation_count",
+        "physics.active_site_violation",
+        "physics.mean_hydrophobicity",
+        "physics.net_charge_proxy",
+    ]
+    head = [c for c in priority if c in df.columns]
+    tail = [c for c in df.columns if c not in head]
+    return df[head + tail]
+
+
+def _render_last_petase_summary() -> None:
+    run = st.session_state.get("last_petase_run")
+    if not run:
+        return
+    with st.expander("Last PETase run (this session)", expanded=False):
+        st.markdown(
+            f"- **JSONL:** `{run.get('out_path', '')}`  \n"
+            f"- **Structures dir:** `{run.get('work_root', '')}`  \n"
+            f"- **Variants written:** {run.get('n_rows', '?')} (cycles requested: {run.get('n_cycles', '?')}, "
+            f"mutations/variant: {run.get('n_mut', '?')}, seed {run.get('seed', '?')})  \n"
+            f"- **ColabFold:** {'yes' if run.get('use_colabfold') else 'no'}  \n"
+            f"- **Two-stage top-K:** {run.get('top_k') if run.get('use_topk') else 'off'}  \n"
+            f"- **Selected for structure:** {run.get('selected_for_structure', '?')}  \n"
+            f"- **Rows with `structure_pdb`:** {run.get('with_structure', '?')}  \n"
+            f"- **Rows with SASA (need PDB + freesasa):** {run.get('with_sasa', '?')}  \n"
+        )
+        if run.get("use_colabfold") and run.get("with_structure", 0) == 0:
+            st.warning(
+                "No structures linked — check each job folder under the structures dir for "
+                "**`colabfold.stderr.log`** (full command, stderr/stdout, and a **structure discovery** "
+                "file list). ColabFold naming varies by version; the log helps align outputs."
+            )
+
+
 def tab_petase() -> None:
     st.subheader("PETase design loop")
     st.caption(
         "Random mutations from WT FASTA, physics composite score, optional ColabFold "
         "(slow; needs local install + GPU)."
     )
+    _render_last_petase_summary()
 
     wt = st.text_input(
         "WT FASTA path",
@@ -271,6 +317,23 @@ def tab_petase() -> None:
     )
 
     use_cf = st.checkbox("Run ColabFold for each variant (very slow)", value=False)
+    if use_cf:
+        st.caption(
+            "ColabFold progress prints in the **terminal where Streamlit runs**, not in the browser. "
+            "Each variant can take a long time on CPU."
+        )
+    use_topk = st.checkbox(
+        "Efficiency mode: cheap-score all, run ColabFold only on top variants",
+        value=False,
+        help="Two-stage screening: sequence-only composite for all, then structure only on top-K.",
+    )
+    top_k = st.number_input(
+        "Top-K variants for ColabFold (when efficiency mode on)",
+        min_value=1,
+        max_value=10_000,
+        value=5,
+        disabled=not use_topk,
+    )
     cf_bin = st.text_input("colabfold_batch command", value="colabfold_batch")
     num_recycle = st.number_input("ColabFold num-recycle", min_value=0, max_value=12, value=3)
     use_amber = st.checkbox("ColabFold --amber (OpenMM relax)", value=False)
@@ -318,6 +381,8 @@ def tab_petase() -> None:
             cmd.append("--colabfold")
             cmd.extend(["--colabfold-bin", cf_bin])
             cmd.extend(["--num-recycle", str(int(num_recycle))])
+            if use_topk:
+                cmd.extend(["--structure-top-k", str(int(top_k))])
             if use_amber:
                 cmd.append("--amber")
 
@@ -371,9 +436,40 @@ def tab_petase() -> None:
             if result_path.is_file():
                 result_path.unlink(missing_ok=True)
 
+        selected_for_structure = sum(1 for r in rows if r.get("selected_for_structure"))
+        with_structure = sum(1 for r in rows if r.get("structure_pdb"))
+        with_sasa = sum(
+            1
+            for r in rows
+            if (r.get("physics") or {}).get("sasa_total_area") is not None
+        )
+        st.session_state["last_petase_run"] = {
+            "out_path": str(out_p),
+            "work_root": str(work_root),
+            "n_rows": len(rows),
+            "n_cycles": int(n_cycles),
+            "n_mut": int(n_mut),
+            "use_colabfold": bool(use_cf),
+            "use_topk": bool(use_topk and use_cf),
+            "top_k": int(top_k) if use_topk and use_cf else None,
+            "seed": int(seed),
+            "selected_for_structure": selected_for_structure,
+            "with_structure": with_structure,
+            "with_sasa": with_sasa,
+        }
+
         st.success(f"Wrote {len(rows)} lines to `{out_p}`")
+        c1, c2, c3, c4, c5 = st.columns(5)
+        c1.metric("Variants", len(rows))
+        c2.metric("Selected for structure", selected_for_structure)
+        c3.metric("With structure_pdb", with_structure)
+        c4.metric("With SASA", with_sasa)
+        c5.metric("ColabFold", "on" if use_cf else "off")
+
         if rows:
-            st.dataframe(pd.json_normalize(rows).head(20), use_container_width=True)
+            disp = _petase_results_dataframe(rows)
+            st.caption("Columns ordered: generation → structure → composite → SASA / Rg → …")
+            st.dataframe(disp.head(50), use_container_width=True, height=420)
 
 
 def tab_structure() -> None:
@@ -426,7 +522,7 @@ def tab_jsonl() -> None:
         if not rows:
             st.warning("No rows parsed.")
             return
-        df = pd.json_normalize(rows)
+        df = _petase_results_dataframe(rows)
         st.dataframe(df, use_container_width=True, height=400)
 
         numeric_cols = [

@@ -516,6 +516,7 @@ In-silico loop for **theoretical IsPETase-like variants**: random mutations → 
 - **WT reference:** `petase_design/data/petase_6eqd_chainA_notag.fasta` (PDB 6EQD, His-tag removed)
 - **Run:** `python -m petase_design.run --cycles 100 --mutations 3 --out petase_design_runs/log.jsonl`
 - **Local ColabFold:** `python -m petase_design.run --colabfold --cycles …` (needs `colabfold_batch` on `PATH`; see [`docs/COLABFOLD_LOCAL.md`](docs/COLABFOLD_LOCAL.md))
+- **Efficiency mode (new):** `--structure-top-k K` with `--colabfold` does two-stage ranking: cheap sequence-only score for all proposals, then ColabFold only on top-`K` variants.
 - **SASA (P2):** `pip install -r petase_design/requirements-extras.txt` — when a ranked **PDB** exists, `physics_score` adds **FreeSASA** polar/apolar breakdown into the composite (`petase_design/sasa_utils.py`).
 - **Next hooks:** **OpenMM** minimization stub in `petase_design/openmm_energy.py`
 

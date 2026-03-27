@@ -41,6 +41,15 @@ def main() -> None:
     )
     ap.add_argument("--num-recycle", type=int, default=3, help="ColabFold --num-recycle")
     ap.add_argument(
+        "--structure-top-k",
+        type=int,
+        default=None,
+        help=(
+            "Two-stage mode: score all variants sequence-only first, then run ColabFold "
+            "for top-K by cheap composite. Ignored unless --colabfold."
+        ),
+    )
+    ap.add_argument(
         "--amber",
         action="store_true",
         help="Pass --amber to colabfold_batch (OpenMM relax; much slower)",
@@ -61,6 +70,8 @@ def main() -> None:
 
     if not args.wt_fasta.is_file():
         raise SystemExit(f"WT FASTA not found: {args.wt_fasta}")
+    if args.structure_top_k is not None and args.structure_top_k <= 0:
+        raise SystemExit("--structure-top-k must be a positive integer.")
 
     runner = None
     if args.colabfold:
@@ -76,6 +87,17 @@ def main() -> None:
     else:
         runner = NullStructureRunner()
 
+    if args.colabfold:
+        print(
+            f"ColabFold mode: {args.cycles} job(s). "
+            "Progress streams to stderr; this can take a long time on CPU.",
+            flush=True,
+        )
+        if args.structure_top_k is not None:
+            print(
+                f"Two-stage mode enabled: structure for top {args.structure_top_k} / {args.cycles} variants.",
+                flush=True,
+            )
     run_design_cycles(
         wt_fasta=args.wt_fasta,
         n_cycles=args.cycles,
@@ -84,8 +106,9 @@ def main() -> None:
         seed=args.seed,
         structure_runner=runner,
         work_root=args.work_dir,
+        structure_top_k=args.structure_top_k if args.colabfold else None,
     )
-    print(f"Wrote {args.cycles} variants to {args.out}")
+    print(f"Wrote {args.cycles} variants to {args.out}", flush=True)
     print("Tip: fill petase_design/data/active_site_indices_0based.txt to protect catalytic pocket.")
 
 

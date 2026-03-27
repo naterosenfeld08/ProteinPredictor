@@ -30,12 +30,33 @@ from gui.insights import render_fireprot_honesty_callout, render_prediction_anal
 from gui.structure_view import render_structure_panel
 
 
+def _apply_presentation_css(enabled: bool) -> None:
+    if not enabled:
+        return
+    st.markdown(
+        """
+<style>
+.block-container {padding-top: 1.2rem; padding-bottom: 1.5rem;}
+h1, h2, h3 {letter-spacing: 0.2px;}
+div[data-testid="stMetric"] {
+  border: 1px solid rgba(120,120,120,0.25);
+  border-radius: 12px;
+  padding: 0.55rem 0.7rem;
+  background: rgba(20,20,30,0.2);
+}
+</style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def _poll_subprocess_with_ui(
     proc: subprocess.Popen,
     *,
     title: str,
     detail: str,
     hint_terminal: str = "",
+    stages: list[str] | None = None,
 ) -> int:
     """
     Wait for a child process while refreshing Streamlit UI.
@@ -53,13 +74,25 @@ def _poll_subprocess_with_ui(
         elapsed = time.monotonic() - started
         dots = "." * (1 + (tick % 3))
         extra = f"  \n{hint_terminal}" if hint_terminal else ""
+        stage_block = ""
+        if stages:
+            active = (tick // 4) % max(len(stages), 1)
+            lines: list[str] = []
+            for i, stage in enumerate(stages):
+                if i < active:
+                    lines.append(f"- [done] {stage}")
+                elif i == active:
+                    lines.append(f"- [running] {stage}")
+                else:
+                    lines.append(f"- [pending] {stage}")
+            stage_block = "\n\n**Pipeline status**  \n" + "  \n".join(lines)
         slot.info(
             f"**{title}**{dots}  \n"
             f"{detail}  \n\n"
             f"Elapsed **{elapsed:.0f}s**. First run may download large model weights "
             f"(**10–20+ minutes**).  \n\n"
             f"**Leave this tab open** and check the **terminal** where you ran "
-            f"`streamlit run` for download / embedding progress.{extra}"
+            f"`streamlit run` for download / embedding progress.{extra}{stage_block}"
         )
     slot.empty()
     return int(proc.returncode or 0)
@@ -272,6 +305,135 @@ def _petase_results_dataframe(rows: list) -> pd.DataFrame:
     return df[head + tail]
 
 
+def _safe_float(x: object) -> float | None:
+    try:
+        if x is None:
+            return None
+        return float(x)
+    except (TypeError, ValueError):
+        return None
+
+
+def _load_run_summary_for_jsonl(out_jsonl: Path) -> dict | None:
+    summary_path = out_jsonl.parent / "run_summary.json"
+    if not summary_path.is_file():
+        return None
+    try:
+        return json.loads(summary_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def _render_run_report_cards(summary: dict) -> None:
+    counts = summary.get("counts") or {}
+    runtime = summary.get("runtime") or {}
+    run_meta = summary.get("run") or {}
+    n_variants = int(counts.get("n_variants", 0) or 0)
+    n_struct = int(counts.get("n_with_structure", 0) or 0)
+    n_sasa = int(counts.get("n_with_sasa", 0) or 0)
+    struct_pct = (100.0 * n_struct / n_variants) if n_variants else 0.0
+    sasa_pct = (100.0 * n_sasa / n_variants) if n_variants else 0.0
+    runtime_s = _safe_float(runtime.get("seconds_wall")) or 0.0
+
+    st.markdown("#### Run report cards")
+    c1, c2, c3, c4, c5 = st.columns(5)
+    c1.metric("Variants", n_variants)
+    c2.metric("With structure", f"{n_struct} ({struct_pct:.1f}%)")
+    c3.metric("With SASA", f"{n_sasa} ({sasa_pct:.1f}%)")
+    c4.metric("Runtime (s)", f"{runtime_s:.1f}")
+    c5.metric("Top-K mode", str(run_meta.get("structure_top_k") or "off"))
+
+    top = summary.get("top_variants") or []
+    if top:
+        st.caption("Top 10 variants from run summary")
+        st.dataframe(pd.DataFrame(top), use_container_width=True, height=280)
+
+
+def _render_phase2_analytics(rows: list[dict], *, key_prefix: str) -> None:
+    if not rows:
+        return
+    df = _petase_results_dataframe(rows)
+    if "generation" in df.columns:
+        df["generation"] = pd.to_numeric(df["generation"], errors="coerce")
+
+    st.markdown("#### Statistical analytics")
+    a1, a2, a3 = st.columns(3)
+    best = None
+    if "physics.composite" in df.columns:
+        comp = pd.to_numeric(df["physics.composite"], errors="coerce")
+        if comp.notna().any():
+            best = float(comp.max())
+            a1.metric("Best composite", f"{best:.4f}")
+            a2.metric("Mean composite", f"{float(comp.mean()):.4f}")
+            a3.metric("Composite std", f"{float(comp.std(ddof=0)):.4f}")
+
+    if "generation" in df.columns and "physics.composite" in df.columns:
+        trend = (
+            df[["generation", "physics.composite"]]
+            .dropna()
+            .groupby("generation", as_index=False)
+            .agg(composite_mean=("physics.composite", "mean"), composite_best=("physics.composite", "max"))
+            .sort_values("generation")
+        )
+        if not trend.empty:
+            st.caption("Composite trend by generation")
+            st.line_chart(
+                trend.set_index("generation")[["composite_mean", "composite_best"]],
+                height=230,
+                use_container_width=True,
+            )
+
+    s1, s2 = st.columns(2)
+    with s1:
+        if {"generation", "physics.composite"}.issubset(df.columns):
+            scatter = df[["generation", "physics.composite"]].dropna()
+            if not scatter.empty:
+                st.caption("Generation vs composite")
+                st.scatter_chart(
+                    scatter.rename(columns={"generation": "x", "physics.composite": "y"}),
+                    x="x",
+                    y="y",
+                    height=260,
+                    use_container_width=True,
+                )
+    with s2:
+        if {"physics.sasa_total_area", "physics.composite"}.issubset(df.columns):
+            s_scatter = df[["physics.sasa_total_area", "physics.composite"]].dropna()
+            if not s_scatter.empty:
+                st.caption("SASA vs composite")
+                st.scatter_chart(
+                    s_scatter.rename(columns={"physics.sasa_total_area": "x", "physics.composite": "y"}),
+                    x="x",
+                    y="y",
+                    height=260,
+                    use_container_width=True,
+                )
+
+    numeric_cols = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])]
+    dist_candidates = [c for c in numeric_cols if c.startswith("physics.")]
+    if dist_candidates:
+        pick = st.selectbox(
+            "Distribution metric",
+            options=dist_candidates,
+            key=f"{key_prefix}_dist_metric",
+        )
+        series = pd.to_numeric(df[pick], errors="coerce").dropna()
+        if not series.empty:
+            st.caption(f"Distribution of `{pick}`")
+            hist = pd.DataFrame({pick: series})
+            st.bar_chart(
+                hist[pick].value_counts(bins=20, sort=False),
+                height=220,
+                use_container_width=True,
+            )
+
+    corr_cols = [c for c in numeric_cols if c.startswith("physics.")]
+    if len(corr_cols) >= 2:
+        st.caption("Correlation matrix (physics features)")
+        corr = df[corr_cols].corr(numeric_only=True).round(3)
+        st.dataframe(corr, use_container_width=True, height=260)
+
+
 def _render_last_petase_summary() -> None:
     run = st.session_state.get("last_petase_run")
     if not run:
@@ -296,55 +458,109 @@ def _render_last_petase_summary() -> None:
             )
 
 
+def _render_pipeline_storyboard(*, use_cf: bool, use_topk: bool) -> None:
+    stages = [
+        "Generate variants",
+        "Embed + LLM score context",
+        "Physics composite ranking",
+    ]
+    if use_cf and use_topk:
+        stages.append("Select top-K for ColabFold")
+    if use_cf:
+        stages.append("Run ColabFold structures")
+        stages.append("Re-score with structure/SASA")
+    stages.append("Finalize run summary artifact")
+    st.markdown("#### Pipeline storyboard")
+    st.caption("This run flow combines LLM-informed sequence context with structure-aware rescoring.")
+    cols = st.columns(len(stages))
+    for i, stage in enumerate(stages):
+        cols[i].markdown(f"**{i+1}. {stage}**")
+
+
+def _render_variant_detail_drawer(rows: list[dict]) -> None:
+    if not rows:
+        return
+    st.markdown("#### Variant detail drawer")
+    labels = [str(r.get("job_id", f"row_{i}")) for i, r in enumerate(rows)]
+    selected = st.selectbox("Inspect variant", options=labels, index=0, key="variant_drawer_pick")
+    row = next((r for r in rows if str(r.get("job_id")) == selected), rows[0])
+    phys = row.get("physics") or {}
+    muts = row.get("mutations") or []
+    muts_txt = ", ".join(f"{m.get('index')}->{m.get('to')}" for m in muts if isinstance(m, dict)) or "none"
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Composite", f"{float(phys.get('composite', 0.0)):.4f}")
+    c2.metric("Mutation count", int(phys.get("mutation_count", 0) or 0))
+    c3.metric("Selected for structure", "yes" if row.get("selected_for_structure") else "no")
+    c4.metric("Has structure", "yes" if row.get("structure_pdb") else "no")
+    st.caption(f"Mutations: {muts_txt}")
+
+    structure_pdb = row.get("structure_pdb")
+    if structure_pdb:
+        p = Path(str(structure_pdb))
+        if p.is_file():
+            pdb_text = p.read_text(encoding="utf-8", errors="replace")
+            render_structure_panel(
+                pdb_text,
+                key_prefix=f"drawer_{selected}",
+                default_style=st.session_state.get("viz_style_default", "cartoon_amino"),
+                default_spin=bool(st.session_state.get("viz_spin_default", False)),
+                height=560 if st.session_state.get("presentation_mode", False) else 500,
+            )
+        else:
+            st.warning(f"Structure path not found on disk: `{p}`")
+
+
 def tab_petase() -> None:
-    st.subheader("PETase design loop")
-    st.caption(
-        "Random mutations from WT FASTA, physics composite score, optional ColabFold "
-        "(slow; needs local install + GPU)."
-    )
+    st.subheader("PETase Design Studio")
+    st.caption("Mission control for variant generation, structure rescoring, and rapid triage.")
     _render_last_petase_summary()
 
-    wt = st.text_input(
-        "WT FASTA path",
-        value=str(REPO_ROOT / "petase_design" / "data" / "petase_6eqd_chainA_notag.fasta"),
-    )
-    n_cycles = st.number_input("Cycles (variants)", min_value=1, max_value=10_000, value=20)
-    n_mut = st.number_input("Mutations per variant", min_value=1, max_value=50, value=2)
-    seed = st.number_input("Random seed", value=42)
-    out_path = st.text_input(
-        "Output JSONL",
-        value=str(REPO_ROOT / "petase_design_runs" / "gui_run.jsonl"),
-    )
-
-    use_cf = st.checkbox("Run ColabFold for each variant (very slow)", value=False)
-    if use_cf:
-        st.caption(
-            "ColabFold progress prints in the **terminal where Streamlit runs**, not in the browser. "
-            "Each variant can take a long time on CPU."
+    col_left, col_right = st.columns([1.1, 1.3], gap="large")
+    with col_left:
+        st.markdown("#### Run configuration")
+        wt = st.text_input(
+            "WT FASTA path",
+            value=str(REPO_ROOT / "petase_design" / "data" / "petase_6eqd_chainA_notag.fasta"),
         )
-    use_topk = st.checkbox(
-        "Efficiency mode: cheap-score all, run ColabFold only on top variants",
-        value=False,
-        help="Two-stage screening: sequence-only composite for all, then structure only on top-K.",
-    )
-    top_k = st.number_input(
-        "Top-K variants for ColabFold (when efficiency mode on)",
-        min_value=1,
-        max_value=10_000,
-        value=5,
-        disabled=not use_topk,
-    )
-    cf_bin = st.text_input("colabfold_batch command", value="colabfold_batch")
-    num_recycle = st.number_input("ColabFold num-recycle", min_value=0, max_value=12, value=3)
-    use_amber = st.checkbox("ColabFold --amber (OpenMM relax)", value=False)
-    cf_overwrite = st.checkbox(
-        "ColabFold overwrite existing results",
-        value=False,
-        disabled=not use_cf,
-        help="Passes --overwrite-existing-results to colabfold_batch (recompute even if cached).",
-    )
+        n_cycles = st.number_input("Cycles (variants)", min_value=1, max_value=10_000, value=20)
+        n_mut = st.number_input("Mutations per variant", min_value=1, max_value=50, value=2)
+        seed = st.number_input("Random seed", value=42)
+        out_path = st.text_input(
+            "Output JSONL",
+            value=str(REPO_ROOT / "petase_design_runs" / "gui_run.jsonl"),
+        )
 
-    if st.button("Run design loop", type="primary"):
+        use_cf = st.checkbox("Run ColabFold for each variant (very slow)", value=False)
+        use_topk = st.checkbox(
+            "Efficiency mode: cheap-score all, run ColabFold only on top variants",
+            value=False,
+            help="Two-stage screening: sequence-only composite for all, then structure only on top-K.",
+        )
+        top_k = st.number_input(
+            "Top-K variants for ColabFold (when efficiency mode on)",
+            min_value=1,
+            max_value=10_000,
+            value=5,
+            disabled=not use_topk,
+        )
+        cf_bin = st.text_input("colabfold_batch command", value="colabfold_batch")
+        num_recycle = st.number_input("ColabFold num-recycle", min_value=0, max_value=12, value=3)
+        use_amber = st.checkbox("ColabFold --amber (OpenMM relax)", value=False)
+        cf_overwrite = st.checkbox(
+            "ColabFold overwrite existing results",
+            value=False,
+            disabled=not use_cf,
+            help="Passes --overwrite-existing-results to colabfold_batch (recompute even if cached).",
+        )
+        run_clicked = st.button("Run design loop", type="primary")
+    with col_right:
+        _render_pipeline_storyboard(use_cf=bool(use_cf), use_topk=bool(use_topk and use_cf))
+        st.caption(
+            "ColabFold progress streams in terminal while this panel tracks pipeline status."
+        )
+
+    if run_clicked:
         wt_p = Path(wt)
         if not wt_p.is_file():
             st.error(f"WT FASTA not found: {wt_p}")
@@ -400,6 +616,13 @@ def tab_petase() -> None:
                 proc,
                 title=f"Design loop ({n_cycles} cycles, separate process)",
                 detail="Proposing variants and scoring. ColabFold makes this much slower.",
+                stages=[
+                    "Generate variants",
+                    "Embedding + scoring",
+                    "Composite ranking",
+                    "ColabFold jobs" if use_cf else "Skip structures",
+                    "Finalize outputs",
+                ],
             )
             raw = ""
             try:
@@ -453,6 +676,7 @@ def tab_petase() -> None:
         )
         st.session_state["last_petase_run"] = {
             "out_path": str(out_p),
+            "run_summary_path": str(out_p.parent / "run_summary.json"),
             "work_root": str(work_root),
             "n_rows": len(rows),
             "n_cycles": int(n_cycles),
@@ -467,17 +691,36 @@ def tab_petase() -> None:
         }
 
         st.success(f"Wrote {len(rows)} lines to `{out_p}`")
-        c1, c2, c3, c4, c5 = st.columns(5)
+        summary = _load_run_summary_for_jsonl(out_p)
+        if summary:
+            _render_run_report_cards(summary)
+        best_composite = None
+        if rows:
+            best_composite = max(
+                float((r.get("physics") or {}).get("composite", float("-inf")))
+                for r in rows
+            )
+        structure_rate = (with_structure / len(rows) * 100.0) if rows else 0.0
+        sasa_rate = (with_sasa / len(rows) * 100.0) if rows else 0.0
+        c1, c2, c3, c4, c5, c6 = st.columns(6)
         c1.metric("Variants", len(rows))
         c2.metric("Selected for structure", selected_for_structure)
-        c3.metric("With structure_pdb", with_structure)
-        c4.metric("With SASA", with_sasa)
-        c5.metric("ColabFold", "on" if use_cf else "off")
+        c3.metric("Structure success", f"{structure_rate:.1f}%")
+        c4.metric("SASA coverage", f"{sasa_rate:.1f}%")
+        c5.metric("Best composite", "n/a" if best_composite is None else f"{best_composite:.4f}")
+        c6.metric("ColabFold", "on" if use_cf else "off")
 
         if rows:
             disp = _petase_results_dataframe(rows)
-            st.caption("Columns ordered: generation → structure → composite → SASA / Rg → …")
-            st.dataframe(disp.head(50), use_container_width=True, height=420)
+            st.markdown("#### Leaderboard")
+            st.caption("Columns ordered: generation -> structure -> composite -> SASA / Rg -> ...")
+            st.dataframe(
+                disp.sort_values("physics.composite", ascending=False).head(50),
+                use_container_width=True,
+                height=420,
+            )
+            _render_phase2_analytics(rows, key_prefix="petase_run")
+            _render_variant_detail_drawer(rows)
 
 
 def tab_structure() -> None:
@@ -492,7 +735,13 @@ def tab_structure() -> None:
         if "ATOM" not in text and "HETATM" not in text:
             st.error("File does not look like PDB (no ATOM/HETATM records).")
             return
-        render_structure_panel(text, key_prefix="main")
+        render_structure_panel(
+            text,
+            key_prefix="main",
+            default_style=st.session_state.get("viz_style_default", "cartoon_amino"),
+            default_spin=bool(st.session_state.get("viz_spin_default", False)),
+            height=620 if st.session_state.get("presentation_mode", False) else 500,
+        )
         st.download_button(
             "Download uploaded PDB",
             data=text.encode("utf-8"),
@@ -530,6 +779,9 @@ def tab_jsonl() -> None:
         if not rows:
             st.warning("No rows parsed.")
             return
+        summary = _load_run_summary_for_jsonl(p)
+        if summary:
+            _render_run_report_cards(summary)
         df = _petase_results_dataframe(rows)
         st.dataframe(df, use_container_width=True, height=400)
 
@@ -545,6 +797,7 @@ def tab_jsonl() -> None:
                 df.sort_values(sort_col, ascending=False).head(100),
                 use_container_width=True,
             )
+        _render_phase2_analytics(rows, key_prefix="jsonl_browse")
 
 
 def main() -> None:
@@ -554,6 +807,28 @@ def main() -> None:
         initial_sidebar_state="expanded",
     )
     st.title("ProteinPredictor")
+    with st.sidebar:
+        st.markdown("### View options")
+        st.session_state["presentation_mode"] = st.checkbox(
+            "Presentation mode",
+            value=bool(st.session_state.get("presentation_mode", False)),
+            help="Bigger visuals and cleaner cards for demos.",
+        )
+        st.session_state["viz_style_default"] = st.selectbox(
+            "Default structure preset",
+            options=["cartoon_amino", "cartoon_chain", "cartoon_sticks", "surface"],
+            index=["cartoon_amino", "cartoon_chain", "cartoon_sticks", "surface"].index(
+                st.session_state.get("viz_style_default", "cartoon_amino")
+            )
+            if st.session_state.get("viz_style_default", "cartoon_amino")
+            in {"cartoon_amino", "cartoon_chain", "cartoon_sticks", "surface"}
+            else 0,
+        )
+        st.session_state["viz_spin_default"] = st.checkbox(
+            "Default auto-rotate structures",
+            value=bool(st.session_state.get("viz_spin_default", False)),
+        )
+    _apply_presentation_css(bool(st.session_state.get("presentation_mode", False)))
     st.markdown(
         f"Working directory for paths: `{REPO_ROOT}` — run Streamlit from anywhere, "
         "but model/FASTA paths are easiest if relative to this folder."

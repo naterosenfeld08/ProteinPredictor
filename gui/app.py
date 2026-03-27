@@ -27,7 +27,12 @@ import pandas as pd
 import streamlit as st
 
 from gui.insights import render_fireprot_honesty_callout, render_prediction_analytics
-from gui.structure_view import render_structure_panel
+from gui.sequence_structure_helper import (
+    build_pseudo_pdb_from_sequence,
+    identify_sequence,
+    sanitize_sequence,
+)
+from gui.structure_view import render_structure_background_motion, render_structure_panel
 
 
 def _apply_presentation_css(enabled: bool) -> None:
@@ -340,7 +345,7 @@ def _render_run_report_cards(summary: dict) -> None:
     c1.metric("Variants", n_variants)
     c2.metric("With structure", f"{n_struct} ({struct_pct:.1f}%)")
     c3.metric("With SASA", f"{n_sasa} ({sasa_pct:.1f}%)")
-    c4.metric("Runtime (s)", f"{runtime_s:.1f}")
+    c4.metric("Runtime (s)", f"{runtime_s:.3f}")
     c5.metric("Top-K mode", str(run_meta.get("structure_top_k") or "off"))
 
     top = summary.get("top_variants") or []
@@ -420,12 +425,14 @@ def _render_phase2_analytics(rows: list[dict], *, key_prefix: str) -> None:
         series = pd.to_numeric(df[pick], errors="coerce").dropna()
         if not series.empty:
             st.caption(f"Distribution of `{pick}`")
-            hist = pd.DataFrame({pick: series})
-            st.bar_chart(
-                hist[pick].value_counts(bins=20, sort=False),
-                height=220,
-                use_container_width=True,
-            )
+            bins = pd.cut(series, bins=20)
+            counts = bins.value_counts(sort=False)
+            labels = [
+                f"{iv.left:.4f}-{iv.right:.4f}" if hasattr(iv, "left") else str(iv)
+                for iv in counts.index
+            ]
+            hist_df = pd.DataFrame({"bin": labels, "count": counts.to_numpy()}).set_index("bin")
+            st.bar_chart(hist_df, height=220, use_container_width=True)
 
     corr_cols = [c for c in numeric_cols if c.startswith("physics.")]
     if len(corr_cols) >= 2:
@@ -461,7 +468,7 @@ def _render_last_petase_summary() -> None:
 def _render_pipeline_storyboard(*, use_cf: bool, use_topk: bool) -> None:
     stages = [
         "Generate variants",
-        "Embed + LLM score context",
+        "Embed + LLM score context" if use_cf else "Sequence-first scoring pass",
         "Physics composite ranking",
     ]
     if use_cf and use_topk:
@@ -729,6 +736,42 @@ def tab_structure() -> None:
         "**PyMOL** is a separate desktop app; this tab gives you an **in-browser** preview (py3Dmol) "
         "plus a small **PyMOL script** you can run locally. It does **not** change ΔΔG predictions."
     )
+    st.markdown("#### Sequence visual helper")
+    seq_input = st.text_area(
+        "Paste amino acid sequence for quick visual model",
+        height=110,
+        placeholder="MKT...",
+        key="structure_seq_input",
+    )
+    seq_col1, seq_col2 = st.columns([1, 2.2])
+    if seq_col1.button("Build sequence model", key="build_seq_model"):
+        clean = sanitize_sequence(seq_input)
+        if len(clean) < 20:
+            st.error("Please provide at least 20 amino acids.")
+        else:
+            ident = identify_sequence(
+                clean,
+                petase_wt_fasta=REPO_ROOT / "petase_design" / "data" / "petase_6eqd_chainA_notag.fasta",
+            )
+            st.session_state["sequence_helper_ident"] = ident
+            st.session_state["sequence_helper_pdb"] = build_pseudo_pdb_from_sequence(clean)
+    ident = st.session_state.get("sequence_helper_ident")
+    helper_pdb = st.session_state.get("sequence_helper_pdb")
+    if ident and isinstance(ident, dict):
+        seq_col2.info(f"Sequence ID: **{ident.get('label','unknown')}** — {ident.get('detail','')}")
+    if helper_pdb and isinstance(helper_pdb, str):
+        st.caption("Soft-motion background preview")
+        render_structure_background_motion(helper_pdb, key_prefix="seq_helper_bg")
+        with st.expander("Full interactive sequence model", expanded=True):
+            render_structure_panel(
+                helper_pdb,
+                key_prefix="seq_helper_full",
+                default_style=st.session_state.get("viz_style_default", "cartoon_amino"),
+                default_spin=True,
+                height=620 if st.session_state.get("presentation_mode", False) else 520,
+            )
+
+    st.markdown("#### Upload real PDB")
     up = st.file_uploader("Upload PDB", type=["pdb", "ent"], key="pdb_upload")
     if up is not None:
         text = up.getvalue().decode("utf-8", errors="replace")

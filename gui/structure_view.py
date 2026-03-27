@@ -35,6 +35,41 @@ def _apply_style(view: object, style: str) -> None:
     view.setStyle({"cartoon": {"colorscheme": "amino"}})
 
 
+def render_structure_background_motion(
+    pdb_text: str,
+    *,
+    key_prefix: str = "bg",
+    height: int = 220,
+) -> None:
+    """
+    Render a soft, blurred, rotating structure as a visual backdrop panel.
+    """
+    try:
+        import py3Dmol  # type: ignore[import-not-found]
+        import streamlit.components.v1 as components
+    except Exception as exc:  # noqa: BLE001
+        st.warning(f"Background structure view unavailable ({type(exc).__name__}: {exc}).")
+        return
+
+    view = py3Dmol.view(width=980, height=height)
+    view.addModel(pdb_text, "pdb")
+    view.setStyle({"cartoon": {"color": "spectrum"}})
+    view.spin(True)
+    view.zoomTo()
+    if not hasattr(view, "_make_html"):
+        return
+    inner = view._make_html()
+    wrapped = f"""
+<div style="position: relative; width: 100%; border-radius: 14px; overflow: hidden;">
+  <div style="filter: blur(2.5px) saturate(1.15); opacity: 0.80;">
+    {inner}
+  </div>
+  <div style="position:absolute; inset:0; background: linear-gradient(180deg, rgba(0,0,0,0.05), rgba(0,0,0,0.24));"></div>
+</div>
+"""
+    components.html(wrapped, width=1000, height=height + 20, scrolling=False)
+
+
 def render_structure_panel(
     pdb_text: str,
     *,

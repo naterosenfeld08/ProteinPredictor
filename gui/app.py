@@ -32,7 +32,11 @@ from gui.sequence_structure_helper import (
     identify_sequence,
     sanitize_sequence,
 )
-from gui.structure_view import render_structure_background_motion, render_structure_panel
+from gui.structure_view import (
+    format_py3dmol_diagnostics,
+    render_structure_background_motion,
+    render_structure_panel,
+)
 
 
 def _apply_presentation_css(enabled: bool) -> None:
@@ -736,6 +740,14 @@ def tab_structure() -> None:
         "**PyMOL** is a separate desktop app; this tab gives you an **in-browser** preview (py3Dmol) "
         "plus a small **PyMOL script** you can run locally. It does **not** change ΔΔG predictions."
     )
+    with st.expander("Viewer troubleshooting / diagnostics", expanded=False):
+        st.markdown(
+            "The in-browser viewer runs **3Dmol.js** inside a Streamlit iframe. Default load is **jsDelivr**; "
+            "**`PY3DMOL_JS_FILE`** inlines a local copy (Chrome blocks `data:` script URLs in this context). "
+            "If the canvas is blank, check **DevTools → Console** for WebGL/script errors and **Network** for `3Dmol-min.js` when not using a local file."
+        )
+        if st.checkbox("Show py3Dmol environment diagnostics", key="struct_diag"):
+            st.json(format_py3dmol_diagnostics())
     st.markdown("#### Sequence visual helper")
     seq_input = st.text_area(
         "Paste amino acid sequence for quick visual model",

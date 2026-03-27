@@ -4,7 +4,103 @@ Optional in-browser structure (py3Dmol) + PyMOL script download for desktop view
 
 from __future__ import annotations
 
+import os
+import re
+from pathlib import Path
+
 import streamlit as st
+
+_DEFAULT_3DMOL_CDN = "https://cdn.jsdelivr.net/npm/3dmol@2.5.4/build/3Dmol-min.js"
+
+
+def _py3dmol_js_file_path() -> Path | None:
+    raw = os.environ.get("PY3DMOL_JS_FILE", "").strip()
+    if not raw:
+        return None
+    p = Path(raw).expanduser()
+    return p if p.is_file() else None
+
+
+def _py3dmol_js_url_for_view() -> str:
+    """
+    URL passed to py3Dmol's ``js=`` parameter (wires ``loadScriptAsync`` in generated HTML).
+
+    **Important:** Chrome blocks ``<script src="data:...">`` inside Streamlit's sandboxed iframe,
+    so we never use a data URI here. For local copies, use ``PY3DMOL_JS_FILE`` and
+    :func:`_patch_py3dmol_html_inline_library` instead.
+
+    - ``PY3DMOL_JS_URL`` — https URL to 3Dmol-min.js (mirror)
+    - else default jsDelivr
+    """
+    url = os.environ.get("PY3DMOL_JS_URL", "").strip()
+    if url:
+        return url
+    return _DEFAULT_3DMOL_CDN
+
+
+def _patch_py3dmol_html_inline_library(html: str, js_file: Path) -> str:
+    """
+    Prepend inline 3Dmol.js and skip async CDN load (Chrome / iframe safe).
+    """
+    raw = js_file.read_text(encoding="utf-8", errors="replace")
+    safe = raw.replace("</script>", "<\\/script>")
+    prefix = f'<script type="text/javascript">\n{safe}\n</script>\n'
+    html2, n = re.subn(
+        r"\$3Dmolpromise\s*=\s*loadScriptAsync\([^)]*\)\s*;",
+        "$3Dmolpromise = Promise.resolve();",
+        html,
+        count=1,
+    )
+    if n == 0:
+        st.warning(
+            "Could not patch py3Dmol loader for inline 3Dmol.js — viewer may stay blank. "
+            "Try unsetting PY3DMOL_JS_FILE and using the default CDN, or upgrade py3Dmol."
+        )
+    return prefix + html2
+
+
+def _finalize_py3dmol_html(html: str) -> str:
+    js_path = _py3dmol_js_file_path()
+    if js_path is not None:
+        return _patch_py3dmol_html_inline_library(html, js_path)
+    return html
+
+
+def format_py3dmol_diagnostics() -> dict[str, str]:
+    """Safe one-screen debug payload for the Structure tab."""
+    out: dict[str, str] = {}
+    try:
+        import py3Dmol  # type: ignore[import-not-found]
+
+        out["py3Dmol_version"] = str(getattr(py3Dmol, "__version__", "?"))
+    except Exception as e:  # noqa: BLE001
+        out["py3Dmol_version"] = f"import failed: {type(e).__name__}: {e}"
+    raw_file = os.environ.get("PY3DMOL_JS_FILE", "").strip()
+    if raw_file and _py3dmol_js_file_path() is None:
+        out["PY3DMOL_JS_FILE_warning"] = f"path not found or not a file: {raw_file!r}"
+
+    fpath = _py3dmol_js_file_path()
+    if fpath is not None:
+        out["3dmol_js_mode"] = "inline file (prepended before py3Dmol bootstrap; Chrome-safe)"
+        out["PY3DMOL_JS_FILE_resolved"] = str(fpath.resolve())
+    else:
+        out["3dmol_js_mode"] = "async URL (py3Dmol loadScriptAsync)"
+        out["3dmol_js_url"] = _py3dmol_js_url_for_view()
+    out["PY3DMOL_JS_FILE"] = os.environ.get("PY3DMOL_JS_FILE", "") or "(not set)"
+    out["PY3DMOL_JS_URL"] = os.environ.get("PY3DMOL_JS_URL", "") or "(not set)"
+    return out
+
+
+def _view_to_html(view: object) -> str | None:
+    if hasattr(view, "_make_html"):
+        html = view._make_html()
+        if isinstance(html, str) and html.strip():
+            return html
+    if hasattr(view, "_repr_html_"):
+        html = view._repr_html_()
+        if isinstance(html, str) and html.strip():
+            return html
+    return None
 
 
 def pymol_load_script(pdb_filename: str = "structure.pdb") -> str:
@@ -42,7 +138,9 @@ def render_structure_background_motion(
     height: int = 220,
 ) -> None:
     """
-    Render a soft, blurred, rotating structure as a visual backdrop panel.
+    Render a soft-motion structure as a visual backdrop panel.
+
+    Note: Do not apply CSS ``filter: blur()`` on the viewer container; it breaks WebGL in many browsers.
     """
     try:
         import py3Dmol  # type: ignore[import-not-found]
@@ -51,20 +149,21 @@ def render_structure_background_motion(
         st.warning(f"Background structure view unavailable ({type(exc).__name__}: {exc}).")
         return
 
-    view = py3Dmol.view(width=980, height=height)
+    js = _py3dmol_js_url_for_view()
+    view = py3Dmol.view(width=980, height=height, js=js)
     view.addModel(pdb_text, "pdb")
     view.setStyle({"cartoon": {"color": "spectrum"}})
     view.spin(True)
     view.zoomTo()
-    if not hasattr(view, "_make_html"):
+    inner = _view_to_html(view)
+    if not inner:
+        st.error("Could not generate py3Dmol HTML for background preview.")
         return
-    inner = view._make_html()
+    inner = _finalize_py3dmol_html(inner)
     wrapped = f"""
-<div style="position: relative; width: 100%; border-radius: 14px; overflow: hidden;">
-  <div style="filter: blur(2.5px) saturate(1.15); opacity: 0.80;">
-    {inner}
-  </div>
-  <div style="position:absolute; inset:0; background: linear-gradient(180deg, rgba(0,0,0,0.05), rgba(0,0,0,0.24));"></div>
+<div style="position: relative; width: 100%; border-radius: 14px; overflow: hidden; opacity: 0.88;">
+  {inner}
+  <div style="position:absolute; inset:0; pointer-events:none; background: linear-gradient(180deg, rgba(0,0,0,0.02), rgba(0,0,0,0.18));"></div>
 </div>
 """
     components.html(wrapped, width=1000, height=height + 20, scrolling=False)
@@ -78,6 +177,7 @@ def render_structure_panel(
     default_style: str = "cartoon_amino",
     default_spin: bool = False,
     height: int = 500,
+    show_troubleshoot_caption: bool = True,
 ) -> None:
     """Show py3Dmol if available; always offer PyMOL script download."""
     st.caption(
@@ -102,14 +202,16 @@ def render_structure_panel(
     try:
         import py3Dmol  # type: ignore[import-not-found]
 
-        view = py3Dmol.view(width=900, height=height)
+        js = _py3dmol_js_url_for_view()
+        view = py3Dmol.view(width=900, height=height, js=js)
         view.addModel(pdb_text, "pdb")
         _apply_style(view, style)
         if spin:
             view.spin(True)
         view.zoomTo()
-        if hasattr(view, "_make_html"):
-            html = view._make_html()
+        html = _view_to_html(view)
+        if html:
+            html = _finalize_py3dmol_html(html)
     except Exception as exc:  # noqa: BLE001
         st.warning(
             f"Could not build in-browser viewer ({type(exc).__name__}: {exc}). "
@@ -120,6 +222,22 @@ def render_structure_panel(
         import streamlit.components.v1 as components
 
         components.html(html, width=920, height=height + 20, scrolling=False)
+        if show_troubleshoot_caption:
+            n_atom = sum(
+                1
+                for line in pdb_text.splitlines()
+                if line.startswith("ATOM") or line.startswith("HETATM")
+            )
+            st.caption(
+                f"Viewer HTML generated ({len(html)} chars, ~{n_atom} ATOM lines). "
+                "If the canvas stays blank: **DevTools → Console** for WebGL/script errors; **Network** for `3Dmol-min.js` "
+                "(unless `PY3DMOL_JS_FILE` inlines it). **Do not** use a `data:` URL for `js=` — Chrome blocks it in iframes; "
+                "use `PY3DMOL_JS_FILE` (now inlined) or `PY3DMOL_JS_URL` / default CDN."
+            )
+    elif show_troubleshoot_caption:
+        st.error(
+            "py3Dmol did not return HTML (unexpected). Check that `py3Dmol` is installed and the PDB text contains ATOM records."
+        )
 
     st.download_button(
         label="Download PyMOL script (load_view.pml)",

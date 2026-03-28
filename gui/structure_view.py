@@ -17,6 +17,14 @@ import streamlit as st
 
 _DEFAULT_3DMOL_CDN = "https://cdn.jsdelivr.net/npm/3dmol@2.5.4/build/3Dmol-min.js"
 
+# Help nested iframes allocate space; py3Dmol sets px on its div but parent chain can still collapse.
+_VIEWER_PAGE_STYLE = (
+    "<style>"
+    "html,body{margin:0;padding:0;width:100%;height:100%;min-height:100vh;background:#0e1117;}"
+    "#pp-outer{min-height:100vh;width:100%;display:block;}"
+    "</style>"
+)
+
 _servers_lock = threading.Lock()
 _servers: dict[str, "_StaticServer"] = {}
 
@@ -95,8 +103,9 @@ def _publish_viewer_iframe(
         "<!DOCTYPE html>\n<html lang=\"en\"><head><meta charset=\"utf-8\"/>\n"
         "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"/>\n"
         "<title>Structure viewer</title>\n"
+        f"{_VIEWER_PAGE_STYLE}\n"
         "</head>\n"
-        f"<body style=\"margin:0;background:#0e1117;\">{inner_html}</body>\n</html>\n"
+        f"<body><div id=\"pp-outer\">{inner_html}</div></body>\n</html>\n"
     )
     (srv.directory / fname).write_text(doc, encoding="utf-8")
     import streamlit.components.v1 as components
@@ -250,8 +259,9 @@ def build_standalone_viewer_html(
         "<!DOCTYPE html>\n<html lang=\"en\"><head><meta charset=\"utf-8\"/>\n"
         '<meta name="viewport" content="width=device-width, initial-scale=1"/>\n'
         "<title>ProteinPredictor — structure viewer</title>\n"
+        f"{_VIEWER_PAGE_STYLE}\n"
         "</head>\n"
-        f'<body style="margin:0;background:#1a1c24;">{inner}</body>\n</html>\n'
+        f'<body><div id="pp-outer">{inner}</div></body>\n</html>\n'
     )
 
 
@@ -380,8 +390,10 @@ def render_structure_panel(
             )
             st.caption(
                 f"Viewer fragment generated ({len(html)} chars, ~{n_atom} ATOM/HETATM lines), "
-                "shown via **loopback iframe src=** (full HTML document, not Streamlit ``srcdoc``). "
-                "If still blank, open the standalone download in Chrome or check WebGL in the **inner** frame console."
+                "shown via **loopback iframe src=**. "
+                "**DevTools:** py3Dmol uses **`viewer_<id>`**, not `viewer` — try "
+                "`Object.keys(window).filter(k => k.startsWith('viewer_'))` in the **viewer page** console. "
+                "If standalone download is also blank, inspect PDB text (pseudo-PDB must look like real ATOM lines)."
             )
     elif show_troubleshoot_caption:
         st.error(

@@ -62,6 +62,28 @@ def identify_sequence(seq: str, *, petase_wt_fasta: Path) -> dict[str, str]:
     return {"label": "custom_sequence", "detail": f"Custom sequence ({len(clean)} aa)."}
 
 
+def _pdb_atom_line(
+    *,
+    serial: int,
+    resname: str,
+    chain: str,
+    resseq: int,
+    x: float,
+    y: float,
+    z: float,
+) -> str:
+    """
+    One ATOM record (Cα only) in PDB-like fixed columns.
+    Matches common minimal examples parsed reliably by 3Dmol.js.
+    """
+    ch = (chain or "A")[:1].upper()
+    rn = resname.strip().upper()[:3].rjust(3)
+    return (
+        f"ATOM  {serial:5d}  CA  {rn} {ch}{resseq:4d}    "
+        f"{x:8.3f}{y:8.3f}{z:8.3f}  1.00 20.00           C"
+    )
+
+
 def build_pseudo_pdb_from_sequence(seq: str, *, chain_id: str = "A") -> str:
     """
     Build a simple C-alpha trace in a loose helix-like path.
@@ -74,6 +96,7 @@ def build_pseudo_pdb_from_sequence(seq: str, *, chain_id: str = "A") -> str:
     atom_id = 1
     radius = 8.0
     rise = 1.5
+    ch = (chain_id or "A")[:1]
     for i, aa in enumerate(clean, start=1):
         theta = i * 1.7
         x = radius * math.cos(theta)
@@ -81,8 +104,15 @@ def build_pseudo_pdb_from_sequence(seq: str, *, chain_id: str = "A") -> str:
         z = rise * i
         resname = AA1_TO_AA3.get(aa, "GLY")
         lines.append(
-            f"ATOM  {atom_id:5d}  CA  {resname:>3s} {chain_id}{i:4d}    "
-            f"{x:8.3f}{y:8.3f}{z:8.3f}  1.00 20.00           C"
+            _pdb_atom_line(
+                serial=atom_id,
+                resname=resname,
+                chain=ch,
+                resseq=i,
+                x=x,
+                y=y,
+                z=z,
+            )
         )
         atom_id += 1
     lines.append("END")

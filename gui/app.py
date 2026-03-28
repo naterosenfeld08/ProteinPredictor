@@ -743,11 +743,10 @@ def tab_structure() -> None:
     )
     with st.expander("Viewer troubleshooting / diagnostics", expanded=False):
         st.markdown(
-            "The in-browser viewer runs **3Dmol.js** inside a Streamlit iframe. "
-            "**`PY3DMOL_JS_FILE`** is served at **`http://127.0.0.1:<port>/3Dmol-min.js`** (tiny iframe payload; avoids broken mega-`srcdoc`). "
-            "Or use **`PY3DMOL_JS_URL`** / default **jsDelivr**. "
-            "If the embed stays blank, use **Download standalone viewer** under the preview (opens in Chrome with the CDN). "
-            "Sandbox / Permissions-Policy warnings in the console are usually harmless."
+            "The viewer is embedded as **`components.iframe(src=http://127.0.0.1:…/viewer_….html)`** — a real page on loopback, "
+            "not Streamlit’s `srcdoc` blob (which often stays blank with WebGL). **`PY3DMOL_JS_FILE`** is copied next to that page as **`3Dmol-min.js`**. "
+            "Or use **`PY3DMOL_JS_URL`** / **jsDelivr**. If it still fails, use **Download standalone viewer**. "
+            "Permissions-Policy console noise from Streamlit is usually harmless."
         )
         if st.checkbox("Show py3Dmol environment diagnostics", key="struct_diag"):
             st.json(format_py3dmol_diagnostics())

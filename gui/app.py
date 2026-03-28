@@ -34,6 +34,7 @@ from gui.sequence_structure_helper import (
 )
 from gui.structure_view import (
     format_py3dmol_diagnostics,
+    render_3dmol_network_help,
     render_structure_background_motion,
     render_structure_panel,
 )
@@ -750,6 +751,8 @@ def tab_structure() -> None:
         )
         if st.checkbox("Show py3Dmol environment diagnostics", key="struct_diag"):
             st.json(format_py3dmol_diagnostics())
+        if st.checkbox("Explain Network tab + test 3Dmol.js URL", key="struct_nethelp"):
+            render_3dmol_network_help(key_prefix="struct_nethelp")
     st.markdown("#### Sequence visual helper")
     seq_input = st.text_area(
         "Paste amino acid sequence for quick visual model",

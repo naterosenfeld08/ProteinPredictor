@@ -70,6 +70,58 @@ def _py3dmol_js_url_for_view() -> str:
     return _DEFAULT_3DMOL_CDN
 
 
+def effective_3dmol_js_url() -> str:
+    """Resolved URL passed to py3Dmol (starts loopback server if ``PY3DMOL_JS_FILE`` is set)."""
+    return _py3dmol_js_url_for_view()
+
+
+def probe_3dmol_js_url(url: str, *, read_bytes: int = 256) -> tuple[bool, str]:
+    """HTTP GET from the Streamlit server process (same machine as the loopback 3Dmol server)."""
+    try:
+        import urllib.error
+        import urllib.request
+
+        req = urllib.request.Request(
+            url,
+            headers={"User-Agent": "ProteinPredictor-GUI/1"},
+            method="GET",
+        )
+        with urllib.request.urlopen(req, timeout=4) as resp:
+            chunk = resp.read(read_bytes)
+            code = getattr(resp, "status", None) or resp.getcode()
+        return True, f"HTTP {code}, read {len(chunk)} bytes (library reachable from Python)."
+    except Exception as e:  # noqa: BLE001
+        return False, f"{type(e).__name__}: {e}"
+
+
+def render_3dmol_network_help(*, key_prefix: str = "nethelp") -> None:
+    """Explain why DevTools Network may not list 3Dmol.js on the top document."""
+    st.markdown(
+        "**Why Network only shows `image/svg+xml`:** that list is usually for the **main Streamlit page** "
+        "(icons, UI). The molecular viewer loads **inside nested iframes** (`about:srcdoc`). "
+        "Subframe requests are easy to miss unless you switch DevTools context.\n\n"
+        "**Chrome:** open DevTools → **Network** → use the **frame / context menu** at the top "
+        "(often shows **top** — try the **iframe** entries), or **right‑click** inside the blank viewer → **Inspect**, "
+        "then in **Network** with that node selected, reload. You can also use **Application → Frames**.\n\n"
+        "Below: the exact **3Dmol.js URL** this app uses, a **server-side fetch check** (from Python), and a link to open it."
+    )
+    url = effective_3dmol_js_url()
+    st.code(url, language="text")
+    ok, msg = probe_3dmol_js_url(url)
+    if ok:
+        st.success(msg)
+    else:
+        st.error(msg)
+    if url.startswith("http://") or url.startswith("https://"):
+        st.link_button(
+            "Open 3Dmol.js URL in new tab (expect minified JavaScript)",
+            url,
+            help="If this fails or downloads nothing, the browser cannot reach the library.",
+            type="secondary",
+            key=f"{key_prefix}_open_js",
+        )
+
+
 def format_py3dmol_diagnostics() -> dict[str, str]:
     """Safe one-screen debug payload for the Structure tab."""
     out: dict[str, str] = {}
@@ -91,6 +143,9 @@ def format_py3dmol_diagnostics() -> dict[str, str]:
     else:
         out["3dmol_js_mode"] = "async URL (py3Dmol loadScriptAsync)"
         out["3dmol_js_url"] = _py3dmol_js_url_for_view()
+    eff = _py3dmol_js_url_for_view()
+    ok, probe = probe_3dmol_js_url(eff)
+    out["python_probe_3dmol_js"] = probe if ok else f"FAIL: {probe}"
     out["PY3DMOL_JS_FILE"] = os.environ.get("PY3DMOL_JS_FILE", "") or "(not set)"
     out["PY3DMOL_JS_URL"] = os.environ.get("PY3DMOL_JS_URL", "") or "(not set)"
     return out

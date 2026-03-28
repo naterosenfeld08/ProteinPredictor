@@ -4,13 +4,43 @@ Optional in-browser structure (py3Dmol) + PyMOL script download for desktop view
 
 from __future__ import annotations
 
+import functools
+import http.server
 import os
-import re
+import shutil
+import tempfile
+import threading
 from pathlib import Path
 
 import streamlit as st
 
 _DEFAULT_3DMOL_CDN = "https://cdn.jsdelivr.net/npm/3dmol@2.5.4/build/3Dmol-min.js"
+
+_local_3dmol_lock = threading.Lock()
+_local_3dmol_cache: dict[str, str] = {}
+
+
+def _serve_3dmol_min_js_on_loopback(js_path: Path) -> str:
+    """
+    Streamlit forwards ``components.html`` via WebSocket; multi‑MB ``srcdoc`` payloads are unreliable.
+    Serve a local copy of ``3Dmol-min.js`` on 127.0.0.1 so the iframe stays small and loads the lib via HTTP.
+    """
+    key = str(js_path.resolve())
+    with _local_3dmol_lock:
+        hit = _local_3dmol_cache.get(key)
+        if hit:
+            return hit
+        d = tempfile.mkdtemp(prefix="pp_3dmol_")
+        dest = Path(d) / "3Dmol-min.js"
+        shutil.copy2(js_path, dest)
+        handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=d)
+        httpd = http.server.HTTPServer(("127.0.0.1", 0), handler)
+        port = int(httpd.server_address[1])
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True, name="pp-3dmol-http")
+        thread.start()
+        url = f"http://127.0.0.1:{port}/3Dmol-min.js"
+        _local_3dmol_cache[key] = url
+        return url
 
 
 def _py3dmol_js_file_path() -> Path | None:
@@ -25,45 +55,19 @@ def _py3dmol_js_url_for_view() -> str:
     """
     URL passed to py3Dmol's ``js=`` parameter (wires ``loadScriptAsync`` in generated HTML).
 
-    **Important:** Chrome blocks ``<script src="data:...">`` inside Streamlit's sandboxed iframe,
-    so we never use a data URI here. For local copies, use ``PY3DMOL_JS_FILE`` and
-    :func:`_patch_py3dmol_html_inline_library` instead.
+    Resolution order:
 
-    - ``PY3DMOL_JS_URL`` — https URL to 3Dmol-min.js (mirror)
-    - else default jsDelivr
+    - ``PY3DMOL_JS_URL`` — explicit https URL (mirror / corp proxy).
+    - ``PY3DMOL_JS_FILE`` — local file is **served on 127.0.0.1** (avoids huge ``srcdoc`` and blocked ``data:`` URLs).
+    - else default jsDelivr CDN.
     """
     url = os.environ.get("PY3DMOL_JS_URL", "").strip()
     if url:
         return url
+    fpath = _py3dmol_js_file_path()
+    if fpath is not None:
+        return _serve_3dmol_min_js_on_loopback(fpath)
     return _DEFAULT_3DMOL_CDN
-
-
-def _patch_py3dmol_html_inline_library(html: str, js_file: Path) -> str:
-    """
-    Prepend inline 3Dmol.js and skip async CDN load (Chrome / iframe safe).
-    """
-    raw = js_file.read_text(encoding="utf-8", errors="replace")
-    safe = raw.replace("</script>", "<\\/script>")
-    prefix = f'<script type="text/javascript">\n{safe}\n</script>\n'
-    html2, n = re.subn(
-        r"\$3Dmolpromise\s*=\s*loadScriptAsync\([^)]*\)\s*;",
-        "$3Dmolpromise = Promise.resolve();",
-        html,
-        count=1,
-    )
-    if n == 0:
-        st.warning(
-            "Could not patch py3Dmol loader for inline 3Dmol.js — viewer may stay blank. "
-            "Try unsetting PY3DMOL_JS_FILE and using the default CDN, or upgrade py3Dmol."
-        )
-    return prefix + html2
-
-
-def _finalize_py3dmol_html(html: str) -> str:
-    js_path = _py3dmol_js_file_path()
-    if js_path is not None:
-        return _patch_py3dmol_html_inline_library(html, js_path)
-    return html
 
 
 def format_py3dmol_diagnostics() -> dict[str, str]:
@@ -81,8 +85,9 @@ def format_py3dmol_diagnostics() -> dict[str, str]:
 
     fpath = _py3dmol_js_file_path()
     if fpath is not None:
-        out["3dmol_js_mode"] = "inline file (prepended before py3Dmol bootstrap; Chrome-safe)"
+        out["3dmol_js_mode"] = "local file served on 127.0.0.1 (small iframe srcdoc)"
         out["PY3DMOL_JS_FILE_resolved"] = str(fpath.resolve())
+        out["3dmol_effective_js_url"] = _py3dmol_js_url_for_view()
     else:
         out["3dmol_js_mode"] = "async URL (py3Dmol loadScriptAsync)"
         out["3dmol_js_url"] = _py3dmol_js_url_for_view()
@@ -101,6 +106,37 @@ def _view_to_html(view: object) -> str | None:
         if isinstance(html, str) and html.strip():
             return html
     return None
+
+
+def build_standalone_viewer_html(
+    pdb_text: str,
+    *,
+    width: int = 900,
+    height: int = 600,
+    js_url: str | None = None,
+) -> str:
+    """
+    Full HTML document using the public CDN for 3Dmol.js — open in a normal browser tab if the Streamlit embed fails.
+    """
+    try:
+        import py3Dmol  # type: ignore[import-not-found]
+    except ImportError:
+        return ""
+    js = js_url or _DEFAULT_3DMOL_CDN
+    view = py3Dmol.view(width=width, height=height, js=js)
+    view.addModel(pdb_text, "pdb")
+    view.setStyle({"cartoon": {"colorscheme": "amino"}})
+    view.zoomTo()
+    inner = _view_to_html(view)
+    if not inner:
+        return ""
+    return (
+        "<!DOCTYPE html>\n<html lang=\"en\"><head><meta charset=\"utf-8\"/>\n"
+        '<meta name="viewport" content="width=device-width, initial-scale=1"/>\n'
+        "<title>ProteinPredictor — structure viewer</title>\n"
+        "</head>\n"
+        f'<body style="margin:0;background:#1a1c24;">{inner}</body>\n</html>\n'
+    )
 
 
 def pymol_load_script(pdb_filename: str = "structure.pdb") -> str:
@@ -159,7 +195,6 @@ def render_structure_background_motion(
     if not inner:
         st.error("Could not generate py3Dmol HTML for background preview.")
         return
-    inner = _finalize_py3dmol_html(inner)
     wrapped = f"""
 <div style="position: relative; width: 100%; border-radius: 14px; overflow: hidden; opacity: 0.88;">
   {inner}
@@ -210,8 +245,6 @@ def render_structure_panel(
             view.spin(True)
         view.zoomTo()
         html = _view_to_html(view)
-        if html:
-            html = _finalize_py3dmol_html(html)
     except Exception as exc:  # noqa: BLE001
         st.warning(
             f"Could not build in-browser viewer ({type(exc).__name__}: {exc}). "
@@ -222,6 +255,16 @@ def render_structure_panel(
         import streamlit.components.v1 as components
 
         components.html(html, width=920, height=height + 20, scrolling=False)
+        standalone = build_standalone_viewer_html(pdb_text, width=900, height=height)
+        if standalone:
+            st.download_button(
+                label="Download standalone viewer (open in Chrome)",
+                data=standalone.encode("utf-8"),
+                file_name="structure_viewer_standalone.html",
+                mime="text/html",
+                key=f"{key_prefix}_standalone_html",
+                help="Uses jsDelivr for 3Dmol.js; works outside Streamlit if the in-app embed is blank.",
+            )
         if show_troubleshoot_caption:
             n_atom = sum(
                 1
@@ -229,10 +272,9 @@ def render_structure_panel(
                 if line.startswith("ATOM") or line.startswith("HETATM")
             )
             st.caption(
-                f"Viewer HTML generated ({len(html)} chars, ~{n_atom} ATOM lines). "
-                "If the canvas stays blank: **DevTools → Console** for WebGL/script errors; **Network** for `3Dmol-min.js` "
-                "(unless `PY3DMOL_JS_FILE` inlines it). **Do not** use a `data:` URL for `js=` — Chrome blocks it in iframes; "
-                "use `PY3DMOL_JS_FILE` (now inlined) or `PY3DMOL_JS_URL` / default CDN."
+                f"Viewer HTML generated ({len(html)} chars, ~{n_atom} ATOM/HETATM lines). "
+                "If blank: **Network** must load `3Dmol-min.js` (CDN, `PY3DMOL_JS_URL`, or `http://127.0.0.1:…` when "
+                "`PY3DMOL_JS_FILE` is set). Huge inlined scripts inside Streamlit’s iframe are avoided on purpose."
             )
     elif show_troubleshoot_caption:
         st.error(

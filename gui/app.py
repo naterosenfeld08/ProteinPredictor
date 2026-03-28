@@ -745,7 +745,8 @@ def tab_structure() -> None:
         st.markdown(
             "The viewer is embedded as **`components.iframe(src=http://127.0.0.1:…/viewer_….html)`** — a real page on loopback, "
             "not Streamlit’s `srcdoc` blob (which often stays blank with WebGL). **`PY3DMOL_JS_FILE`** is copied next to that page as **`3Dmol-min.js`**. "
-            "Or use **`PY3DMOL_JS_URL`** / **jsDelivr**. If it still fails, use **Download standalone viewer**. "
+            "Or set **`PY3DMOL_JS_URL`** (default is **3dmol.csb.pitt.edu**; jsDelivr is a common override). "
+            "If it still fails, use **Download standalone viewer**. "
             "Permissions-Policy console noise from Streamlit is usually harmless.  \n\n"
             "**Console trap:** py3Dmol defines **`viewer_<timestamp>`**, not `viewer`. "
             "`viewer.getModel()` will throw **ReferenceError** even when the viewer is fine."

@@ -15,7 +15,9 @@ from pathlib import Path
 
 import streamlit as st
 
-_DEFAULT_3DMOL_CDN = "https://cdn.jsdelivr.net/npm/3dmol@2.5.4/build/3Dmol-min.js"
+# Official Pitt-hosted build (avoids blocked/misrouted jsDelivr in some networks).
+# Override with PY3DMOL_JS_URL, e.g. https://cdn.jsdelivr.net/npm/3dmol@2.5.4/build/3Dmol-min.js for a pinned mirror.
+_DEFAULT_3DMOL_CDN = "https://3dmol.csb.pitt.edu/build/3Dmol-min.js"
 
 # Help nested iframes allocate space; py3Dmol sets px on its div but parent chain can still collapse.
 _VIEWER_PAGE_STYLE = (
@@ -135,7 +137,7 @@ def _py3dmol_js_url_for_view() -> str:
 
     - ``PY3DMOL_JS_URL`` — explicit URL (mirror / corp proxy).
     - ``PY3DMOL_JS_FILE`` — local file is **served on 127.0.0.1** together with ``viewer.html``.
-    - else default jsDelivr CDN.
+    - else default CDN (3dmol.csb.pitt.edu).
     """
     return _viewer_server_and_js_url()[1]
 
@@ -380,7 +382,7 @@ def render_structure_panel(
                 file_name="structure_viewer_standalone.html",
                 mime="text/html",
                 key=f"{key_prefix}_standalone_html",
-                help="Uses jsDelivr for 3Dmol.js; works outside Streamlit if the in-app embed is blank.",
+                help="Uses the same default 3Dmol.js CDN as the in-app viewer; open in Chrome if the embed is blank.",
             )
         if show_troubleshoot_caption:
             n_atom = sum(

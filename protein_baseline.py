@@ -1,6 +1,14 @@
 """
-Baseline ML Pipeline for Protein Property Prediction
-Uses precomputed embeddings from ProtT5-XL and ESM-2 650M models
+Core ML and embedding pipeline for protein ΔΔG (and related) prediction.
+
+**Embeddings:** ProtT5-XL and ESM-2 via Hugging Face ``transformers``, plus optional
+20-D amino-acid composition from ``embeddings/composition.py``.
+
+**Models:** Random Forest, XGBoost (if importable), PyTorch MLP, and weighted ensembles.
+Training, evaluation, caching, and CLI/API helpers live in this large module for historical
+reasons; newer entrypoints (e.g. ``train_mlp_rf_ensemble.py``) import the pieces they need.
+
+**Optional:** Flask REST routes when Flask is installed; Plotly/Parquet/Excel exports when those deps exist.
 """
 
 import json

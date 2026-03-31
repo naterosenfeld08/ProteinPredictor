@@ -1,22 +1,41 @@
+# ProteinPredictor — core dependencies (pip install -r requirements.txt)
+# Python: 3.9+ recommended. Install a matching PyTorch build for your OS/GPU from pytorch.org if needed.
+#
+# Groups:
+#   Core numerics / ML
+#   PyTorch + Hugging Face (ProtT5, ESM-2 embeddings)
+#   Visualization & GUI
+#   Optional API / export (Flask, Excel, Parquet) — imported defensively in code where relevant
+
+# --- Core numerics / ML ---
 numpy>=1.21.0
 pandas>=1.3.0
 scikit-learn>=1.0.0
 scipy>=1.8.0
 xgboost>=1.5.0
-torch>=1.10.0
-transformers>=4.20.0
-sentencepiece>=0.1.96
-matplotlib>=3.5.0
-seaborn>=0.12.0
 tqdm>=4.64.0
 optuna>=3.0.0
 lightgbm>=3.3.0
+
+# --- PyTorch + Hugging Face ---
+torch>=1.10.0
+transformers>=4.20.0
+sentencepiece>=0.1.96
+
+# --- Visualization ---
+matplotlib>=3.5.0
+seaborn>=0.12.0
 plotly>=5.0.0
 kaleido>=0.2.1
+
+# --- Export formats (used when available) ---
 openpyxl>=3.0.0
 pyarrow>=10.0.0
+
+# --- Optional HTTP API (protein_baseline Flask routes) ---
 flask>=2.0.0
 flask-cors>=3.0.0
+
+# --- Streamlit GUI + structure preview ---
 streamlit>=1.35.0
 py3dmol>=2.0.0
-

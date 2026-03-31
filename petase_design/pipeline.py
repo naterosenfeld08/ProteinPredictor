@@ -1,3 +1,9 @@
+"""
+PETase design **orchestration**: random mutations, optional two-stage ColabFold, JSONL logging.
+
+Calls :func:`petase_design.physics_score.score_sequence_physics` for each proposal.
+"""
+
 from __future__ import annotations
 
 import json

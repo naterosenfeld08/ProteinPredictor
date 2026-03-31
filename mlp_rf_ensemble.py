@@ -34,6 +34,8 @@ def _predict_with_rf_uncertainty(
 
 @dataclass(frozen=True)
 class MLPEngineConfig:
+    """Shape and dropout for ``mlp_baseline.BaselineMLP`` when loading from a saved ensemble."""
+
     input_dim: int
     dropout: float
 

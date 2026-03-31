@@ -1,5 +1,14 @@
 """
-Optional in-browser structure (py3Dmol) + PyMOL script download for desktop viewing.
+In-browser protein structure (py3Dmol) and optional PyMOL script download for the Streamlit **Structure** tab.
+
+**3Dmol.js loading:** py3Dmol injects a ``<script>`` that loads the JS library from:
+
+- ``PY3DMOL_JS_URL`` if set, else
+- ``http://127.0.0.1:.../3Dmol-min.js`` if ``PY3DMOL_JS_FILE`` points at a local ``3Dmol-min.js``, else
+- ``_DEFAULT_3DMOL_CDN`` (Pitt-hosted ``3Dmol-min.js``).
+
+Viewer HTML is served over a loopback ``HTTPServer`` and embedded with ``iframe`` ``src=`` (not ``srcdoc``)
+so large PDBs and script loading behave reliably in nested frames.
 """
 
 from __future__ import annotations

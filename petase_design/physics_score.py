@@ -1,12 +1,12 @@
-from __future__ import annotations
-
 """
 Physics-informed and geometry proxies for thermostability screening.
 
 Tier 0: sequence-only (hydropathy, charge, aromatics, active-site protection).
-Tier 1: optional PDB — Cα radius of gyration (compactness) + **FreeSASA** polar/apolar SASA when
-`freesasa` is installed (`petase_design/requirements-extras.txt`).
+Tier 1: optional PDB — Cα radius of gyration (compactness) + FreeSASA polar/apolar SASA when
+``freesasa`` is installed (``petase_design/requirements-extras.txt``).
 """
+
+from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path

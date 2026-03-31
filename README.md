@@ -335,90 +335,54 @@ This observation is important because it suggests that improvements should focus
 
 ## Repository Structure
 
+The layout below matches this repository (flat training/CLI scripts at the root, GUI and PETase code in packages):
+
 ```
 ProteinPredictor/
-├── README.md                          # This file (main documentation)
-├── requirements.txt                   # Python dependencies
-├── .gitignore                         # Git ignore patterns
+├── README.md
+├── requirements.txt                  # Core Python deps (see header in file)
+├── petase_design/requirements-extras.txt   # Optional: BioPython, FreeSASA
+├── config/                           # Seeds, embedding dims, default paths, hyperparameters
+├── embeddings/                       # Amino-acid composition + composition helpers
+├── gui/                              # Streamlit app, subprocess workers, py3Dmol / PyMOL helpers
+├── petase_design/                  # PETase design loop, physics score, ColabFold hook, SASA
+├── docs/                             # Extra guides (GitHub setup, ColabFold, limitations, …)
+├── scripts/                          # launch_gui.command, automation helpers (not Python training entrypoints)
 │
-├── data/                              # Data loading and preprocessing
-│   ├── __init__.py
-│   ├── fireprot_loader.py            # FireProtDB data loading
-│   └── data_splits.py                # Train/val/test split management
+├── predict.py                        # CLI: batch FASTA or single-sequence ΔΔG prediction
+├── train_mlp_rf_ensemble.py          # Train MLP + RF ensemble (ProtT5 + ESM-2 + composition)
+├── protein_baseline.py               # Embedding extraction, FireProt training paths, Flask API (optional)
+├── fireprot_data_loader.py           # FireProt CSV loading and splits
+├── mlp_baseline.py                   # PyTorch MLP definition and training helpers
+├── mlp_rf_ensemble.py                # MLPRandomForestEnsemble for inference
+├── validate_model.py                 # Holdout validation metrics / plots
+├── compare_all_models.py             # Compare saved models (when artifacts exist)
+├── create_ensemble_model.py, retrain_models_normalized.py, lock_baseline.py, …
 │
-├── embeddings/                        # Embedding extraction and composition
-│   ├── __init__.py
-│   ├── extractor.py                  # Embedding extraction from PLMs
-│   ├── composition.py                # Amino acid composition features
-│   └── composition_methods.py        # Embedding composition utilities
-│
-├── models/                            # Model definitions
-│   ├── __init__.py
-│   ├── random_forest.py              # Random Forest model
-│   ├── xgboost_model.py             # XGBoost model
-│   └── mlp.py                        # MLP neural network
-│
-├── training/                          # Training scripts
-│   ├── __init__.py
-│   ├── train_baseline.py             # Main training script
-│   ├── train_mlp.py                 # MLP-specific training
-│   └── train_ensemble.py            # Ensemble training
-│
-├── evaluation/                        # Evaluation and metrics
-│   ├── __init__.py
-│   ├── metrics.py                    # Metric computation
-│   ├── evaluation.py                 # Model evaluation
-│   └── comparison.py                 # Model comparison utilities
-│
-├── config/                            # Configuration and constants
-│   ├── __init__.py
-│   ├── constants.py                  # Global constants (seeds, paths)
-│   └── model_configs.py              # Model hyperparameters
-│
-├── scripts/                           # Executable scripts
-│   ├── predict.py                    # Prediction CLI
-│   ├── train.py                      # Training CLI
-│   └── evaluate.py                  # Evaluation CLI
-│
-├── interfaces/                        # User interfaces
-│   ├── gui.py                        # Streamlit web interface
-│   └── web_api.py                    # REST API server
-│
-├── utils/                             # Utility functions
-│   ├── __init__.py
-│   ├── logging_utils.py              # Logging setup
-│   ├── file_utils.py                # File I/O utilities
-│   └── validation.py                 # Input validation
-│
-├── MLP Summary/                       # MLP baseline documentation
-│   └── [comprehensive MLP documentation]
-│
-├── Ensemble Evaluation Summary/       # Ensemble analysis results
-│   └── [ensemble evaluation results]
-│
-└── Baseline Lock/                     # Final baseline configuration
-    └── [baseline lock documentation]
+├── training_output/                  # Created by training (models, splits, caches) — name may vary
+├── training_output (CRITICAL DIRECTORY DO NOT TOUCH)/   # Documented ensemble artifacts (see below)
+├── Ensemble Evaluation Summary/      # Optional: outputs from ensemble comparison runs
+└── Baseline Lock/                    # Optional: outputs from lock_baseline.py
 ```
 
-### Key Directories
+### Key locations
 
-- **`data/`**: Data loading, preprocessing, and split management
-- **`embeddings/`**: Embedding extraction from protein language models and composition
-- **`models/`**: Model architecture definitions
-- **`training/`**: Training loops and optimization
-- **`evaluation/`**: Metrics, evaluation, and comparison utilities
-- **`config/`**: Global constants, seeds, and hyperparameters
-- **`scripts/`**: Command-line interfaces for training and prediction
-- **`interfaces/`**: Web GUI and REST API
-- **`utils/`**: Shared utility functions
+| Path | Role |
+|------|------|
+| `config/constants.py` | Single source for seeds, embedding sizes (2344), model defaults |
+| `protein_baseline.py` | Hugging Face PLMs, embedding cache, RF/XGB/ensemble training & `predict_*` |
+| `gui/app.py` | Streamlit UI (ΔΔG, PETase design, JSONL browser, Structure) |
+| `gui/predict_worker.py`, `gui/design_worker.py` | Subprocess workers so the server stays responsive |
+| `petase_design/pipeline.py` | Random mutagenesis + physics scoring (+ optional ColabFold) |
+| `docs/LIMITATIONS_AND_PRIORS.md` | How to interpret FireProt-scale outputs |
 
 ## Installation
 
 ### Requirements
 
-- Python 3.8+
-- PyTorch 1.10+
-- CUDA-capable GPU (optional, for faster embedding extraction)
+- **Python** 3.9+ recommended (3.8+ generally works; match your `torch` wheel).
+- **PyTorch** — installed via `requirements.txt` (CPU or CUDA build per your platform).
+- **GPU** — optional; speeds embedding extraction and any local ColabFold runs.
 
 ### Setup
 
@@ -427,9 +391,9 @@ ProteinPredictor/
 git clone <repository-url>
 cd ProteinPredictor
 
-# Create virtual environment
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+# Create virtual environment (name is arbitrary: .venv, venv, …)
+python -m venv .venv
+source .venv/bin/activate  # Windows: .venv\Scripts\activate
 
 # Install dependencies
 pip install -r requirements.txt
@@ -439,26 +403,25 @@ pip install -r requirements.txt
 
 ### Key Dependencies
 
-- **torch**: PyTorch for transformer model inference
-- **transformers**: Hugging Face library for pretrained protein language models
-- **scikit-learn**: Machine learning algorithms (Random Forest)
-- **xgboost**: Gradient boosting for XGBoost model
-- **numpy, pandas**: Numerical computing and data manipulation
-- **matplotlib, seaborn**: Visualization
-- **streamlit**: Web application framework (GUI)
-- **py3dmol**: In-browser protein structure preview in the Streamlit **Structure** tab
+- **torch**, **transformers**, **sentencepiece**: PLM inference (ProtT5, ESM-2)
+- **scikit-learn**, **xgboost**, **lightgbm**, **optuna**: Tabular models and tuning
+- **numpy**, **pandas**, **scipy**: Arrays, tables, statistics
+- **matplotlib**, **seaborn**, **plotly**, **kaleido**: Plots and exports
+- **streamlit**, **py3dmol**: Web GUI and HTML generation for the **Structure** tab (the browser loads **3Dmol.js** from a CDN by default — see **Structure** troubleshooting below)
+- **flask**, **flask-cors**: Optional REST API paths inside `protein_baseline.py`
+- **openpyxl**, **pyarrow**: Optional export formats
 
 ## Usage
 
-### Training Models
+### Training the MLP + Random Forest ensemble
+
+Primary training entrypoint:
 
 ```bash
-# Train all baseline models
-python scripts/train.py --data_path fireprotdb_with_sequences.csv
-
-# Train MLP only
-python scripts/train.py --model mlp --data_path fireprotdb_with_sequences.csv
+python train_mlp_rf_ensemble.py --help
 ```
+
+Point `--fireprot_csv` at your FireProt-style CSV (see `train_mlp_rf_ensemble.py --help` for defaults and columns). Artifacts go under `training_output/` (exact paths are printed by the script). Other top-level scripts (`retrain_models_normalized.py`, `create_ensemble_model.py`, `compare_all_models.py`) are for alternate or legacy workflows when those files exist in your checkout.
 
 ### Making Predictions
 
@@ -484,6 +447,8 @@ Your browser opens to a local app with **four** tabs:
 2. **PETase design** — set cycles / mutations / output JSONL; optional **ColabFold** (slow).
 3. **Browse JSONL** — load a design log and sort/filter in a table.
 4. **Structure** — upload a **PDB** for **py3Dmol** in-browser preview (requires `py3dmol` in `requirements.txt`) and download a small **PyMOL** loader script for desktop viewing.
+
+**Structure tab — if the viewer stays blank:** In the embedded page’s DevTools console, `typeof $3Dmol` should not be `"undefined"`. The app loads **3Dmol.js** from **`https://3dmol.csb.pitt.edu/build/3Dmol-min.js`** by default. If your network blocks it, set environment variable **`PY3DMOL_JS_URL`** to another HTTPS URL for `3Dmol-min.js`, or **`PY3DMOL_JS_FILE`** to a local path (the app serves it over loopback). Expand **Structure troubleshooting** in the app for the exact URL in use.
 
 **Tip:** On macOS you can double-click **`scripts/launch_gui.command`** (activates `venv/` if present, then runs Streamlit). Or run the `streamlit` line from any terminal.
 
@@ -524,16 +489,13 @@ Scores are **proxies**, not measured Tm — validate top candidates experimental
 
 ### Evaluation
 
-```bash
-# Evaluate all models
-python scripts/evaluate.py --data_path fireprotdb_with_sequences.csv
-```
+Use `validate_model.py` and `compare_all_models.py` with the same CSV and model paths your training produced. Run `python validate_model.py --help` (and the compare script) for current flags — options depend on which artifacts are present locally.
 
 ## Reproducibility
 
 ### Random Seeds
 
-All random seeds are set in `config/constants.py`:
+Random seeds and embedding dimensions are centralized in `config/constants.py`:
 - **Random Seed**: 42 (used for all random operations)
 - **NumPy**: `np.random.seed(42)`
 - **PyTorch**: `torch.manual_seed(42)`
@@ -559,20 +521,16 @@ If you use this codebase, please cite:
 ```bibtex
 @software{protein_predictor,
   title = {Protein Stability Prediction Using Pretrained Embeddings},
-  author = {[Your Name]},
-  year = {2025},
-  url = {[Repository URL]}
+  author = {Nate Rosenfeld},
+  year = {2026},
+  url = {https://github.com/naterosenfeld08/ProteinPredictor}
 }
 ```
 
 ## License
 
-[Specify license]
+See the repository root for a `LICENSE` file if present; otherwise clarify terms with the maintainer before redistribution.
 
 ## Contact
 
-[Contact information]
-
----
-
-**Note**: This repository is prepared for external expert review. All code, documentation, and results have been validated and are ready for public release.
+Open an issue on the GitHub repository for bugs or questions about this codebase.

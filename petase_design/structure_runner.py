@@ -1,8 +1,11 @@
-from __future__ import annotations
+"""
+Structure prediction: local ColabFold (``colabfold_batch``) or skip (null runner).
 
+``ColabFoldLocalRunner`` shells out to the user's installed ``colabfold_batch``.
+``NullStructureRunner`` skips structure prediction (sequence-only physics score).
 """
-Structure prediction: local ColabFold (`colabfold_batch`) or skip (null runner).
-"""
+
+from __future__ import annotations
 
 import os
 import shutil

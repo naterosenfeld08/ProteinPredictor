@@ -1,3 +1,7 @@
+"""
+Summaries for PETase design runs: compact JSON metadata written next to JSONL logs.
+"""
+
 from __future__ import annotations
 
 import json

@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """
-Run PETase design cycles in an isolated process (for Streamlit GUI).
+Run PETase design cycles in an isolated process so the Streamlit server stays responsive.
+
+Invoked by ``gui/app.py`` with CLI args; writes JSONL and a full JSON result payload.
+Do not import Streamlit here.
 """
 
 from __future__ import annotations

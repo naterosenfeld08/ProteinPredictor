@@ -37,10 +37,12 @@ AA1_TO_AA3 = {
 
 
 def sanitize_sequence(seq: str) -> str:
+    """Keep letters only, uppercased (for loose user input)."""
     return "".join(ch for ch in seq.upper() if ch.isalpha())
 
 
 def load_fasta_sequence(path: Path) -> str | None:
+    """Return first FASTA sequence as a string, or ``None`` if the file is missing or empty."""
     if not path.is_file():
         return None
     lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
@@ -49,6 +51,12 @@ def load_fasta_sequence(path: Path) -> str | None:
 
 
 def identify_sequence(seq: str, *, petase_wt_fasta: Path) -> dict[str, str]:
+    """
+    Compare ``seq`` to the bundled PETase WT (length / identity) for UI labeling.
+
+    Returns keys ``label`` (``petase_wt_exact`` | ``petase_like`` | ``custom_sequence`` | …)
+    and ``detail`` (human-readable explanation).
+    """
     clean = sanitize_sequence(seq)
     wt = load_fasta_sequence(petase_wt_fasta)
     if not clean:

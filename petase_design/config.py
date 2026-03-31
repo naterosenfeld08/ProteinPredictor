@@ -1,3 +1,10 @@
+"""
+Package-local paths and tunable weights for the PETase design loop.
+
+Copy ``data/active_site_indices_0based.example.txt`` to ``active_site_indices_0based.txt``
+to list 0-based residue indices protected from mutation.
+"""
+
 from __future__ import annotations
 
 from pathlib import Path

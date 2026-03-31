@@ -1,3 +1,7 @@
+"""
+Random mutagenesis helpers: sample positions and amino acids, apply to WT sequence.
+"""
+
 from __future__ import annotations
 
 import random

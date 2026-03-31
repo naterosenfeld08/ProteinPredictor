@@ -1,12 +1,12 @@
-from __future__ import annotations
-
 """
 Locate ColabFold / localcolabfold batch outputs and convert mmCIF → PDB.
 
 ColabFold versions differ: outputs may be ``ranked_0.pdb``, ``*_unrelaxed_*_rank_*.pdb``,
-nested subfolders, or mmCIF-only. We collect all plausible structure files under the job
-directory, score by filename heuristics, and pick the best match.
+nested subfolders, or mmCIF-only. This module collects plausible structure files under the job
+directory, scores by filename heuristics, and picks the best match.
 """
+
+from __future__ import annotations
 
 import re
 from pathlib import Path

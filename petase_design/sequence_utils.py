@@ -1,3 +1,7 @@
+"""
+Shared sequence utilities for PETase design: FASTA parsing, mutations, Kyte–Doolittle table.
+"""
+
 from __future__ import annotations
 
 import re

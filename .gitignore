@@ -6,6 +6,7 @@ __pycache__/
 .Python
 env/
 venv/
+.venv/
 venv_py311/
 ENV/
 build/
@@ -109,11 +110,8 @@ Embedding Summary/
 MLP Summary/
 Baseline Lock/
 
-# But keep README files in summary folders
+# Keep markdown/text docs (e.g. READMEs inside ignored summary dirs)
 !**/README.md
 !**/README.txt
-!**/*.md
-
-# Keep documentation but ignore generated visualizations
 !**/*.md
 !**/*.txt

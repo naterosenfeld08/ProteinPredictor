@@ -12,7 +12,7 @@ import os
 
 
 def configure_worker_runtime_env() -> None:
-    """setdefault so users can override in the shell if needed."""
+    """Set process env defaults; uses ``os.environ.setdefault`` so a preset shell wins."""
     for key, val in (
         ("TOKENIZERS_PARALLELISM", "false"),
         ("OMP_NUM_THREADS", "1"),

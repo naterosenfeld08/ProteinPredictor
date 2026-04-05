@@ -1,6 +1,6 @@
 # Protein Stability Prediction (ΔΔG) Using Pretrained Embeddings
 
-A machine learning pipeline for predicting protein stability changes (ΔΔG) using fixed-dimensional embeddings from state-of-the-art protein language models. This repository implements and compares multiple baseline models (Random Forest, XGBoost, and Multilayer Perceptron) trained on precomputed protein embeddings.
+A machine learning pipeline for predicting protein stability changes (ΔΔG) using fixed-dimensional embeddings from state-of-the-art protein language models. This repository implements and compares multiple baseline models (Random Forest, XGBoost, and Multilayer Perceptron); embeddings are typically **cached or recomputed during training** and reused for fast inference.
 
 ## Project Overview
 
@@ -18,7 +18,7 @@ A machine learning pipeline for predicting protein stability changes (ΔΔG) usi
 
 ### Approach
 
-This project uses **fixed-dimensional embeddings** extracted from pretrained protein language models as input features. The embeddings are precomputed and stored, allowing rapid model training and evaluation without requiring sequence-level modeling during inference.
+This project uses **fixed-dimensional embeddings** extracted from pretrained protein language models as input features. Training scripts may **cache** embeddings on disk to skip re-encoding unchanged data; **inference** still runs the frozen PLM(s) on each new sequence to build the feature vector.
 
 **Key Design Decision**: We use fixed embeddings rather than sequence models because:
 1. **Efficiency**: Precomputed embeddings enable fast training and inference
@@ -57,7 +57,7 @@ This project uses **fixed-dimensional embeddings** extracted from pretrained pro
 2. **Data Splitting**:
    - Stratified by ΔΔG distribution to maintain similar distributions across splits
    - Fixed random seed (42) for reproducibility
-   - Splits saved to `data_splits.npz` for consistency across experiments
+   - Split indices saved to `data_splits.npz` (typically under your training output directory, e.g. `training_output/…`)
 
 3. **Target Variable**:
    - Column: `DDG` (ΔΔG in kcal/mol)
@@ -345,7 +345,7 @@ ProteinPredictor/
 ├── config/                           # Seeds, embedding dims, default paths, hyperparameters
 ├── embeddings/                       # Amino-acid composition + composition helpers
 ├── gui/                              # Streamlit app, subprocess workers, py3Dmol / PyMOL helpers
-├── petase_design/                  # PETase design loop, physics score, ColabFold hook, SASA
+├── petase_design/                    # PETase design loop, physics score, ColabFold hook, SASA
 ├── docs/                             # Extra guides (GitHub setup, ColabFold, limitations, …)
 ├── scripts/                          # launch_gui.command, automation helpers (not Python training entrypoints)
 │
@@ -388,7 +388,7 @@ ProteinPredictor/
 
 ```bash
 # Clone repository
-git clone <repository-url>
+git clone https://github.com/naterosenfeld08/ProteinPredictor.git
 cd ProteinPredictor
 
 # Create virtual environment (name is arbitrary: .venv, venv, …)
@@ -426,11 +426,11 @@ Point `--fireprot_csv` at your FireProt-style CSV (see `train_mlp_rf_ensemble.py
 ### Making Predictions
 
 ```bash
-# Batch prediction from FASTA
-python predict.py fasta sequences.fasta --model_path models/baseline_ensemble.pkl
+# Batch prediction from FASTA (use your trained .pkl path)
+python predict.py fasta sequences.fasta --model_path path/to/mlp_rf_ensemble.pkl
 
 # Single sequence (sequence mode)
-python predict.py sequences --sequence "MKTAYIAKQR..." --name Protein1 --model_path models/baseline_ensemble.pkl
+python predict.py sequences --sequence "MKTAYIAKQR..." --name Protein1 --model_path path/to/mlp_rf_ensemble.pkl
 ```
 
 ### Web GUI (Streamlit)
@@ -450,7 +450,7 @@ Your browser opens to a local app with **four** tabs:
 
 **Structure tab — if the viewer stays blank:** In the embedded page’s DevTools console, `typeof $3Dmol` should not be `"undefined"`. The app loads **3Dmol.js** from **`https://3dmol.csb.pitt.edu/build/3Dmol-min.js`** by default. If your network blocks it, set environment variable **`PY3DMOL_JS_URL`** to another HTTPS URL for `3Dmol-min.js`, or **`PY3DMOL_JS_FILE`** to a local path (the app serves it over loopback). Expand **Structure troubleshooting** in the app for the exact URL in use.
 
-**Tip:** On macOS you can double-click **`scripts/launch_gui.command`** (activates `venv/` if present, then runs Streamlit). Or run the `streamlit` line from any terminal.
+**Tip:** On macOS you can double-click **`scripts/launch_gui.command`** (activates `.venv/` or `venv/` if present, then runs Streamlit). Or run the `streamlit` line from any terminal.
 
 **If the browser says “Is Streamlit still running?”:** long embeddings used to block the Streamlit process. The GUI now runs **ΔΔG prediction** and **PETase design** in **separate Python subprocesses** (`gui/predict_worker.py`, `gui/design_worker.py`) so the server stays responsive. **Watch the terminal** where `streamlit run` is running for Hugging Face / model download and embedding logs. Keep the tab open until the green success message appears.
 
@@ -504,7 +504,7 @@ Random seeds and embedding dimensions are centralized in `config/constants.py`:
 
 ### Data Splits
 
-Fixed train/val/test splits are stored in `data_splits.npz` and used consistently across all experiments.
+Train/val/test indices are stored in `data_splits.npz` next to the training run’s artifacts (see `config/constants.py` defaults and `train_mlp_rf_ensemble.py`’s `--output_dir`).
 
 ### Model Checkpoints
 

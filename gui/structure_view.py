@@ -1,11 +1,13 @@
 """
 In-browser protein structure (py3Dmol) and optional PyMOL script download for the Streamlit **Structure** tab.
 
-**3Dmol.js loading:** py3Dmol injects a ``<script>`` that loads the JS library from:
+**3Dmol.js loading:** py3Dmol injects a ``<script>`` for the library. By default the app **downloads**
+the chosen URL once into the loopback static dir and serves ``/3Dmol-min.js`` from **the same origin**
+as ``viewer_….html`` (avoids third‑party / tracking‑prevention blocks on cross‑origin scripts inside
+nested iframes). Override behavior:
 
-- ``PY3DMOL_JS_URL`` if set, else
-- ``http://127.0.0.1:.../3Dmol-min.js`` if ``PY3DMOL_JS_FILE`` points at a local ``3Dmol-min.js``, else
-- ``_DEFAULT_3DMOL_CDN`` (Pitt-hosted ``3Dmol-min.js``).
+- ``PY3DMOL_NO_MIRROR=1`` — pass the remote URL straight to py3Dmol (old behavior).
+- ``PY3DMOL_JS_URL`` / ``PY3DMOL_JS_FILE`` — same mirror logic unless ``NO_MIRROR``.
 
 Viewer HTML is served over a loopback ``HTTPServer`` and embedded with ``iframe`` ``src=`` (not ``srcdoc``)
 so large PDBs and script loading behave reliably in nested frames.
@@ -38,6 +40,51 @@ _VIEWER_PAGE_STYLE = (
 
 _servers_lock = threading.Lock()
 _servers: dict[str, "_StaticServer"] = {}
+_mirror_locks: dict[str, threading.Lock] = {}
+_MIN_3DMOL_BYTES = 100_000  # sanity: full min build is ~500kB
+
+
+def _lock_for_mirror_dir(directory: Path) -> threading.Lock:
+    key = str(directory.resolve())
+    with _servers_lock:
+        if key not in _mirror_locks:
+            _mirror_locks[key] = threading.Lock()
+        return _mirror_locks[key]
+
+
+def _mirror_remote_3dmol_to_loopback(srv: _StaticServer, source_url: str) -> str:
+    """
+    Write ``3Dmol-min.js`` next to ``viewer_….html`` and return ``http://127.0.0.1:…/3Dmol-min.js``.
+
+    If download fails or ``PY3DMOL_NO_MIRROR`` is set, returns ``source_url`` unchanged.
+    """
+    if os.environ.get("PY3DMOL_NO_MIRROR", "").strip().lower() in ("1", "true", "yes"):
+        return source_url
+    dest = srv.directory / "3Dmol-min.js"
+    lock = _lock_for_mirror_dir(srv.directory)
+    with lock:
+        try:
+            if dest.is_file() and dest.stat().st_size >= _MIN_3DMOL_BYTES:
+                return f"{srv.root_url}/3Dmol-min.js"
+        except OSError:
+            pass
+        try:
+            import urllib.error
+            import urllib.request
+
+            req = urllib.request.Request(
+                source_url,
+                headers={"User-Agent": "ProteinPredictor-GUI/1"},
+                method="GET",
+            )
+            with urllib.request.urlopen(req, timeout=45) as resp:
+                data = resp.read()
+            if len(data) < _MIN_3DMOL_BYTES:
+                raise ValueError(f"3Dmol-min.js too small ({len(data)} bytes)")
+            dest.write_bytes(data)
+        except Exception:
+            return source_url
+    return f"{srv.root_url}/3Dmol-min.js"
 
 
 @dataclass(frozen=True)
@@ -54,6 +101,12 @@ def _handler_class_for_directory(directory: Path) -> type[http.server.SimpleHTTP
     class Handler(http.server.SimpleHTTPRequestHandler):
         def __init__(self, *args, **kwargs):
             super().__init__(*args, directory=d, **kwargs)
+
+        def guess_type(self, path: str) -> str:
+            lp = path.lower()
+            if lp.endswith(".js") or lp.endswith(".mjs"):
+                return "application/javascript"
+            return super().guess_type(path)
 
         def end_headers(self) -> None:
             self.send_header("Cache-Control", "no-store, max-age=0, must-revalidate")
@@ -85,18 +138,18 @@ def _get_static_server(cache_key: str, js_library_source: Path | None) -> _Stati
 
 
 def _viewer_server_and_js_url() -> tuple[_StaticServer, str]:
-    """Loopback server + the ``js=`` URL py3Dmol should use (local file or CDN)."""
+    """Loopback server + the ``js=`` URL py3Dmol should use (prefer same-origin ``/3Dmol-min.js``)."""
     env_url = os.environ.get("PY3DMOL_JS_URL", "").strip()
     if env_url:
         srv = _get_static_server(f"url:{env_url}", None)
-        return srv, env_url
+        return srv, _mirror_remote_3dmol_to_loopback(srv, env_url)
     fpath = _py3dmol_js_file_path()
     if fpath is not None:
         key = str(fpath.resolve())
         srv = _get_static_server(key, fpath)
         return srv, f"{srv.root_url}/3Dmol-min.js"
     srv = _get_static_server("__cdn_only__", None)
-    return srv, _DEFAULT_3DMOL_CDN
+    return srv, _mirror_remote_3dmol_to_loopback(srv, _DEFAULT_3DMOL_CDN)
 
 
 def _publish_viewer_iframe(
@@ -144,9 +197,9 @@ def _py3dmol_js_url_for_view() -> str:
 
     Resolution order:
 
-    - ``PY3DMOL_JS_URL`` — explicit URL (mirror / corp proxy).
-    - ``PY3DMOL_JS_FILE`` — local file is **served on 127.0.0.1** together with ``viewer.html``.
-    - else default CDN (3dmol.csb.pitt.edu).
+    - ``PY3DMOL_JS_URL`` — fetch from this URL; file is **mirrored** onto loopback when possible.
+    - ``PY3DMOL_JS_FILE`` — copy is **served on 127.0.0.1** together with ``viewer.html``.
+    - else default CDN URL, **mirrored** to loopback (same-origin script; set ``PY3DMOL_NO_MIRROR=1`` to skip).
     """
     return _viewer_server_and_js_url()[1]
 
@@ -180,7 +233,8 @@ def render_3dmol_network_help(*, key_prefix: str = "nethelp") -> None:
     st.markdown(
         "**Why Network only shows `image/svg+xml`:** that list is usually for the **main Streamlit page** "
         "(icons, UI). The viewer is a **nested iframe** whose **document** is `http://127.0.0.1:…/viewer_….html` — "
-        "its requests (including `3Dmol-min.js`) show under that frame’s context, not “top”.\n\n"
+        "its requests (including **`3Dmol-min.js`**, now usually **same-origin** on that loopback) show under "
+        "that frame’s context, not “top”.\n\n"
         "**Chrome:** open DevTools → **Network** → use the **frame / context menu** at the top "
         "(often shows **top** — try the **iframe** entries), or **right‑click** inside the blank viewer → **Inspect**, "
         "then in **Network** with that node selected, reload. You can also use **Application → Frames**.\n\n"
@@ -219,11 +273,22 @@ def format_py3dmol_diagnostics() -> dict[str, str]:
         srv, js_u = _viewer_server_and_js_url()
         out["3dmol_effective_js_url"] = js_u
         out["viewer_loopback_root"] = srv.root_url
+        out["3dmol_same_origin_script"] = "yes — PY3DMOL_JS_FILE is served as /3Dmol-min.js on loopback."
     else:
         out["3dmol_js_mode"] = "async URL (py3Dmol loadScriptAsync) + viewer page on loopback"
         srv, js_u = _viewer_server_and_js_url()
         out["3dmol_js_url"] = js_u
         out["viewer_loopback_root"] = srv.root_url
+        if js_u.startswith(srv.root_url):
+            out["3dmol_same_origin_script"] = (
+                "yes — 3Dmol-min.js is served from the same loopback origin as the viewer "
+                "(mirrored from CDN unless PY3DMOL_NO_MIRROR=1)."
+            )
+        else:
+            out["3dmol_same_origin_script"] = (
+                "no — script loads from a remote host (mirror failed or PY3DMOL_NO_MIRROR=1); "
+                "adblock / tracking prevention in nested iframes may block it."
+            )
     eff = _py3dmol_js_url_for_view()
     ok, probe = probe_3dmol_js_url(eff)
     out["python_probe_3dmol_js"] = probe if ok else f"FAIL: {probe}"

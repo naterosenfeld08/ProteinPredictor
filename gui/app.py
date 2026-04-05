@@ -744,8 +744,11 @@ def tab_structure() -> None:
     with st.expander("Viewer troubleshooting / diagnostics", expanded=False):
         st.markdown(
             "The viewer is embedded as **`components.iframe(src=http://127.0.0.1:…/viewer_….html)`** — a real page on loopback, "
-            "not Streamlit’s `srcdoc` blob (which often stays blank with WebGL). **`PY3DMOL_JS_FILE`** is copied next to that page as **`3Dmol-min.js`**. "
-            "Or set **`PY3DMOL_JS_URL`** (default is **3dmol.csb.pitt.edu**; jsDelivr is a common override). "
+            "not Streamlit’s `srcdoc` blob (which often stays blank with WebGL). "
+            "By default the app **mirrors** `3Dmol-min.js` from the CDN onto that same loopback origin "
+            "so the script is **not** cross-origin (Safari/Firefox/Brave often block third-party script in nested iframes). "
+            "**`PY3DMOL_JS_FILE`** still copies your file to **`3Dmol-min.js`**. "
+            "**`PY3DMOL_JS_URL`** is mirrored the same way. Set **`PY3DMOL_NO_MIRROR=1`** to force a remote `js=` URL. "
             "If it still fails, use **Download standalone viewer**. "
             "Permissions-Policy console noise from Streamlit is usually harmless.  \n\n"
             "**Console trap:** py3Dmol defines **`viewer_<timestamp>`**, not `viewer`. "

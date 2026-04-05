@@ -3,7 +3,7 @@ Helpers for quick sequence-driven structure visualization in the GUI.
 
 This is intentionally a lightweight visual model generator for demos:
 - It identifies whether a sequence matches the bundled PETase WT.
-- It can synthesize a pseudo-PDB (CA trace) from sequence so py3Dmol can render it.
+- It can synthesize a pseudo-PDB backbone from sequence so py3Dmol can render it.
 """
 
 from __future__ import annotations
@@ -73,28 +73,32 @@ def identify_sequence(seq: str, *, petase_wt_fasta: Path) -> dict[str, str]:
 def _pdb_atom_line(
     *,
     serial: int,
+    atom_name: str,
     resname: str,
     chain: str,
     resseq: int,
     x: float,
     y: float,
     z: float,
+    element: str,
 ) -> str:
     """
-    One ATOM record (Cα only) in PDB-like fixed columns.
+    One ATOM record in PDB-like fixed columns.
     Matches common minimal examples parsed reliably by 3Dmol.js.
     """
     ch = (chain or "A")[:1].upper()
     rn = resname.strip().upper()[:3].rjust(3)
+    an = atom_name.strip().upper()[:4].rjust(4)
+    el = element.strip().upper()[:2].rjust(2)
     return (
-        f"ATOM  {serial:5d}  CA  {rn} {ch}{resseq:4d}    "
-        f"{x:8.3f}{y:8.3f}{z:8.3f}  1.00 20.00           C"
+        f"ATOM  {serial:5d} {an} {rn} {ch}{resseq:4d}    "
+        f"{x:8.3f}{y:8.3f}{z:8.3f}  1.00 20.00           {el}"
     )
 
 
 def build_pseudo_pdb_from_sequence(seq: str, *, chain_id: str = "A") -> str:
     """
-    Build a simple C-alpha trace in a loose helix-like path.
+    Build a lightweight pseudo-backbone (N/CA/C/O) along a loose helix-like path.
     This is for visual storytelling only, not structural accuracy.
     """
     clean = sanitize_sequence(seq)
@@ -111,17 +115,27 @@ def build_pseudo_pdb_from_sequence(seq: str, *, chain_id: str = "A") -> str:
         y = radius * math.sin(theta)
         z = rise * i
         resname = AA1_TO_AA3.get(aa, "GLY")
-        lines.append(
-            _pdb_atom_line(
-                serial=atom_id,
-                resname=resname,
-                chain=ch,
-                resseq=i,
-                x=x,
-                y=y,
-                z=z,
-            )
+        # Minimal peptide-like backbone so cartoon rendering has expected atoms.
+        atoms = (
+            ("N", x - 1.20, y - 0.10, z - 0.55, "N"),
+            ("CA", x, y, z, "C"),
+            ("C", x + 1.20, y + 0.10, z + 0.55, "C"),
+            ("O", x + 1.65, y + 0.55, z + 1.25, "O"),
         )
-        atom_id += 1
+        for atom_name, ax, ay, az, elem in atoms:
+            lines.append(
+                _pdb_atom_line(
+                    serial=atom_id,
+                    atom_name=atom_name,
+                    resname=resname,
+                    chain=ch,
+                    resseq=i,
+                    x=ax,
+                    y=ay,
+                    z=az,
+                    element=elem,
+                )
+            )
+            atom_id += 1
     lines.append("END")
     return "\n".join(lines) + "\n"

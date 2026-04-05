@@ -782,6 +782,11 @@ def tab_structure() -> None:
     if ident and isinstance(ident, dict):
         seq_col2.info(f"Sequence ID: **{ident.get('label','unknown')}** — {ident.get('detail','')}")
     if helper_pdb and isinstance(helper_pdb, str):
+        st.caption(
+            "Sequence helper uses a **pseudo-structure** for visualization only. "
+            "Different sequences often look like the same overall tube-like scaffold, "
+            "with changes mainly in length/coloring. For real fold differences, upload a real PDB."
+        )
         st.caption("Soft-motion background preview")
         render_structure_background_motion(helper_pdb, key_prefix="seq_helper_bg")
         with st.expander("Full interactive sequence model", expanded=True):

@@ -480,6 +480,13 @@ def _petase_results_dataframe(rows: list) -> pd.DataFrame:
     df = pd.json_normalize(rows)
     priority = [
         "generation",
+        "selected_by",
+        "rescue_reason",
+        "hybrid_score",
+        "cheap_score_norm",
+        "ddg_pred",
+        "ddg_uncertainty",
+        "ddg_effective",
         "selected_for_structure",
         "structure_pdb",
         "physics.composite",
@@ -642,6 +649,9 @@ def _render_last_petase_summary() -> None:
             f"- **Selected for structure:** {run.get('selected_for_structure', '?')}  \n"
             f"- **Rows with `structure_pdb`:** {run.get('with_structure', '?')}  \n"
             f"- **Rows with SASA (need PDB + freesasa):** {run.get('with_sasa', '?')}  \n"
+            f"- **Rows scored by ddG stage:** {run.get('with_ddg', '?')} "
+            f"(budget {100.0 * float(run.get('ddg_survivor_pct', 0.0)):.0f}%)  \n"
+            f"- **Rescued by lane C:** {run.get('rescued', '?')}  \n"
         )
         if run.get("use_colabfold") and run.get("with_structure", 0) == 0:
             st.warning(
@@ -723,6 +733,41 @@ def tab_petase() -> None:
             "Output JSONL",
             value=str(REPO_ROOT / "petase_design_runs" / "gui_run.jsonl"),
         )
+        st.markdown("#### Hybrid reranking (cheap + ddG)")
+        ddg_model_path = st.text_input(
+            "ddG model (.pkl)",
+            value=_default_model_path(),
+            help="Used in stage-2 reranking. Lower predicted ddG is preferred.",
+        )
+        ddg_survivor_pct = st.slider(
+            "Stage-2 ddG survivor budget (% of total variants)",
+            min_value=5,
+            max_value=100,
+            value=35,
+            step=5,
+        )
+        c_hw1, c_hw2 = st.columns(2)
+        with c_hw1:
+            hybrid_cheap_weight = st.number_input("Cheap score weight", min_value=0.0, max_value=1.0, value=0.5, step=0.05)
+        with c_hw2:
+            hybrid_ddg_weight = st.number_input("ddG prior weight", min_value=0.0, max_value=1.0, value=0.5, step=0.05)
+        ddg_uncertainty_lambda = st.number_input(
+            "ddG uncertainty penalty (lambda)",
+            min_value=0.0,
+            max_value=2.0,
+            value=0.5,
+            step=0.05,
+        )
+        ddg_embed_type = st.selectbox(
+            "ddG embedding mode",
+            options=["both", "prot_t5", "esm2"],
+            index=0,
+        )
+        ddg_no_comp = st.checkbox(
+            "Disable composition features for ddG stage",
+            value=False,
+            help="Only enable if your ddG model was trained without composition features.",
+        )
 
         use_cf = st.checkbox("Run ColabFold for each variant (very slow)", value=False)
         use_topk = st.checkbox(
@@ -755,6 +800,10 @@ def tab_petase() -> None:
         wt_p = Path(wt)
         if not wt_p.is_file():
             st.error(f"WT FASTA not found: {wt_p}")
+            return
+        ddg_model_p = Path(ddg_model_path).expanduser()
+        if not ddg_model_p.is_file():
+            st.error(f"ddG model not found: {ddg_model_p}")
             return
 
         out_p = Path(out_path)
@@ -800,6 +849,14 @@ def tab_petase() -> None:
                 cmd.append("--amber")
             if cf_overwrite:
                 cmd.append("--colabfold-overwrite")
+        cmd.extend(["--ddg-model", str(ddg_model_p)])
+        cmd.extend(["--ddg-survivor-pct", str(float(ddg_survivor_pct) / 100.0)])
+        cmd.extend(["--ddg-embedding-model-type", str(ddg_embed_type)])
+        cmd.extend(["--hybrid-cheap-weight", str(float(hybrid_cheap_weight))])
+        cmd.extend(["--hybrid-ddg-weight", str(float(hybrid_ddg_weight))])
+        cmd.extend(["--ddg-uncertainty-lambda", str(float(ddg_uncertainty_lambda))])
+        if ddg_no_comp:
+            cmd.append("--ddg-no-composition")
 
         try:
             live_gallery_slot = st.empty()
@@ -870,6 +927,8 @@ def tab_petase() -> None:
 
         selected_for_structure = sum(1 for r in rows if r.get("selected_for_structure"))
         with_structure = sum(1 for r in rows if r.get("structure_pdb"))
+        with_ddg = sum(1 for r in rows if r.get("ddg_pred") is not None)
+        rescued = sum(1 for r in rows if str(r.get("selected_by", "")).strip() == "rescue_lane")
         with_sasa = sum(
             1
             for r in rows
@@ -889,6 +948,9 @@ def tab_petase() -> None:
             "selected_for_structure": selected_for_structure,
             "with_structure": with_structure,
             "with_sasa": with_sasa,
+            "with_ddg": with_ddg,
+            "rescued": rescued,
+            "ddg_survivor_pct": float(ddg_survivor_pct) / 100.0,
         }
 
         st.success(f"Wrote {len(rows)} lines to `{out_p}`")
@@ -901,22 +963,29 @@ def tab_petase() -> None:
                 float((r.get("physics") or {}).get("composite", float("-inf")))
                 for r in rows
             )
+        best_hybrid = None
+        if rows:
+            best_hybrid = max(float(r.get("hybrid_score", float("-inf"))) for r in rows)
         structure_rate = (with_structure / len(rows) * 100.0) if rows else 0.0
         sasa_rate = (with_sasa / len(rows) * 100.0) if rows else 0.0
-        c1, c2, c3, c4, c5, c6 = st.columns(6)
+        ddg_rate = (with_ddg / len(rows) * 100.0) if rows else 0.0
+        c1, c2, c3, c4, c5, c6, c7 = st.columns(7)
         c1.metric("Variants", len(rows))
         c2.metric("Selected for structure", selected_for_structure)
         c3.metric("Structure success", f"{structure_rate:.1f}%")
         c4.metric("SASA coverage", f"{sasa_rate:.1f}%")
         c5.metric("Best composite", "n/a" if best_composite is None else f"{best_composite:.4f}")
-        c6.metric("ColabFold", "on" if use_cf else "off")
+        c6.metric("ddG staged", f"{ddg_rate:.1f}%")
+        c7.metric("Best hybrid", "n/a" if best_hybrid is None else f"{best_hybrid:.4f}")
 
         if rows:
             disp = _petase_results_dataframe(rows)
             st.markdown("#### Leaderboard")
             st.caption("Columns prioritize generation, structure, composite score, and SASA / Rg metrics.")
             st.dataframe(
-                disp.sort_values("physics.composite", ascending=False).head(50),
+                disp.sort_values("hybrid_score", ascending=False).head(50)
+                if "hybrid_score" in disp.columns
+                else disp.sort_values("physics.composite", ascending=False).head(50),
                 use_container_width=True,
                 height=420,
             )

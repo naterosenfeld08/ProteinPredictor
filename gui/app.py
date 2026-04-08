@@ -44,19 +44,80 @@ from gui.structure_view import (
 
 
 def _apply_presentation_css(enabled: bool) -> None:
-    if not enabled:
-        return
+    panel_radius = "0px" if enabled else "2px"
+    panel_border = "rgba(255,255,255,0.20)" if enabled else "rgba(255,255,255,0.14)"
+    panel_blur = "16px" if enabled else "10px"
+    panel_bg = "rgba(8,8,10,0.86)" if enabled else "rgba(10,10,12,0.80)"
+    header_tracking = "0.9px" if enabled else "0.5px"
     st.markdown(
-        """
+        f"""
 <style>
-.block-container {padding-top: 1.2rem; padding-bottom: 1.5rem;}
-h1, h2, h3 {letter-spacing: 0.2px;}
-div[data-testid="stMetric"] {
-  border: 1px solid rgba(120,120,120,0.25);
-  border-radius: 12px;
+:root {{
+  --pp-panel-bg: {panel_bg};
+  --pp-panel-border: {panel_border};
+  --pp-panel-radius: {panel_radius};
+  --pp-panel-blur: {panel_blur};
+}}
+
+/* Sleek black animated blurred background */
+[data-testid="stAppViewContainer"] {{
+  background: radial-gradient(1600px 700px at -10% -20%, rgba(90,90,120,0.18), transparent 60%),
+              radial-gradient(1100px 560px at 120% 10%, rgba(60,100,160,0.14), transparent 55%),
+              #040405;
+}}
+[data-testid="stAppViewContainer"]::before {{
+  content: "";
+  position: fixed;
+  inset: -18vh -12vw;
+  z-index: 0;
+  pointer-events: none;
+  filter: blur(42px);
+  opacity: 0.42;
+  background: conic-gradient(from 0deg at 30% 30%,
+    rgba(120, 120, 210, 0.22),
+    rgba(90, 160, 210, 0.18),
+    rgba(60, 90, 130, 0.15),
+    rgba(120, 120, 210, 0.22));
+  animation: pp-slow-drift 36s linear infinite;
+}}
+@keyframes pp-slow-drift {{
+  0% {{ transform: translate3d(-2%, -1%, 0) rotate(0deg) scale(1.05); }}
+  50% {{ transform: translate3d(2%, 1%, 0) rotate(180deg) scale(1.08); }}
+  100% {{ transform: translate3d(-2%, -1%, 0) rotate(360deg) scale(1.05); }}
+}}
+
+[data-testid="stAppViewContainer"] > .main {{
+  position: relative;
+  z-index: 1;
+}}
+.block-container {{
+  padding-top: 1.0rem;
+  padding-bottom: 1.3rem;
+}}
+h1, h2, h3 {{
+  letter-spacing: {header_tracking};
+  text-transform: uppercase;
+  font-weight: 700;
+}}
+p, li, label, span, div {{
+  font-family: Inter, "SF Pro Display", "Segoe UI", Arial, sans-serif;
+}}
+
+/* Panels and cards */
+[data-testid="stVerticalBlock"] > [style*="flex-direction: column"] > [data-testid="stVerticalBlockBorderWrapper"],
+div[data-testid="stMetric"],
+div[data-testid="stAlert"] {{
+  border: 1px solid var(--pp-panel-border) !important;
+  border-radius: var(--pp-panel-radius) !important;
+  background: var(--pp-panel-bg) !important;
+  backdrop-filter: blur(var(--pp-panel-blur));
+}}
+div[data-testid="stMetric"] {{
   padding: 0.55rem 0.7rem;
-  background: rgba(20,20,30,0.2);
-}
+}}
+button, [data-baseweb="select"] > div, textarea, input {{
+  border-radius: 0 !important;
+}}
 </style>
         """,
         unsafe_allow_html=True,
@@ -212,15 +273,15 @@ def _default_model_path() -> str:
 
 
 def tab_predict() -> None:
-    st.subheader("Predict ΔΔG (stability change)")
+    st.subheader("ΔΔG Prediction")
     render_fireprot_honesty_callout()
     st.caption(
-        "Uses your trained ensemble + PLM embeddings. First run may download "
-        "ProtT5/ESM weights and can take several minutes."
+        "Runs your trained ensemble with PLM embeddings. The first execution may download "
+        "ProtT5/ESM model weights and can take several minutes."
     )
     last = st.session_state.get("last_prediction")
     if last:
-        with st.expander("Last finished prediction (this browser session)", expanded=False):
+        with st.expander("Last prediction in this session", expanded=False):
             st.metric("Predicted ΔΔG (kcal/mol)", f"{last['pred_value']:.4f}")
             st.caption(f"Sequence: **{last.get('name', '?')}** ({last.get('length', '?')} aa)")
             if st.button("Clear saved result", key="clear_last_pred"):
@@ -252,17 +313,17 @@ def tab_predict() -> None:
     use_comp = st.checkbox("Append composition features (20 AA frequencies)", value=True)
     payload = _build_sequence_visual_payload(sequence)
     if payload and payload.get("pdb_text"):
-        st.markdown("#### Live structural companion")
+        st.markdown("#### Live Structure Companion")
         st.caption(
-            "While prediction computes embeddings, this panel previews the best available structure "
-            "for your input sequence (curated known PDB when matched; otherwise pseudo fallback)."
+            "During embedding and inference, this panel previews the best available structure for "
+            "the current sequence (curated known PDB when matched; otherwise pseudo fallback)."
         )
         if payload.get("mode") == "known_pdb":
             st.success(f"{payload.get('title', 'Known structure')} — {payload.get('detail', '')}")
         else:
             st.info(f"{payload.get('title', 'Preview')} — {payload.get('detail', '')}")
         render_structure_background_motion(payload["pdb_text"], key_prefix="predict_live_bg")
-        with st.expander("Interactive structural companion", expanded=False):
+        with st.expander("Interactive structure preview", expanded=False):
             render_structure_panel(
                 payload["pdb_text"],
                 key_prefix="predict_live_full",
@@ -454,7 +515,7 @@ def _render_run_report_cards(summary: dict) -> None:
     sasa_pct = (100.0 * n_sasa / n_variants) if n_variants else 0.0
     runtime_s = _safe_float(runtime.get("seconds_wall")) or 0.0
 
-    st.markdown("#### Run report cards")
+    st.markdown("#### Run Summary Cards")
     c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("Variants", n_variants)
     c2.metric("With structure", f"{n_struct} ({struct_pct:.1f}%)")
@@ -464,7 +525,7 @@ def _render_run_report_cards(summary: dict) -> None:
 
     top = summary.get("top_variants") or []
     if top:
-        st.caption("Top 10 variants from run summary")
+        st.caption("Top 10 variants from the run summary")
         st.dataframe(pd.DataFrame(top), use_container_width=True, height=280)
 
 
@@ -475,7 +536,7 @@ def _render_phase2_analytics(rows: list[dict], *, key_prefix: str) -> None:
     if "generation" in df.columns:
         df["generation"] = pd.to_numeric(df["generation"], errors="coerce")
 
-    st.markdown("#### Statistical analytics")
+    st.markdown("#### Statistical Analytics")
     a1, a2, a3 = st.columns(3)
     best = None
     if "physics.composite" in df.columns:
@@ -591,8 +652,8 @@ def _render_pipeline_storyboard(*, use_cf: bool, use_topk: bool) -> None:
         stages.append("Run ColabFold structures")
         stages.append("Re-score with structure/SASA")
     stages.append("Finalize run summary artifact")
-    st.markdown("#### Pipeline storyboard")
-    st.caption("This run flow combines LLM-informed sequence context with structure-aware rescoring.")
+    st.markdown("#### Pipeline Overview")
+    st.caption("This workflow combines sequence-level priors with optional structure-aware rescoring.")
     cols = st.columns(len(stages))
     for i, stage in enumerate(stages):
         cols[i].markdown(f"**{i+1}. {stage}**")
@@ -634,7 +695,7 @@ def _render_variant_detail_drawer(rows: list[dict]) -> None:
 
 def tab_petase() -> None:
     st.subheader("PETase Design Studio")
-    st.caption("Mission control for variant generation, structure rescoring, and rapid triage.")
+    st.caption("Configure variant generation, optional ColabFold structure passes, and ranking analytics.")
     _render_last_petase_summary()
 
     col_left, col_right = st.columns([1.1, 1.3], gap="large")
@@ -677,9 +738,7 @@ def tab_petase() -> None:
         run_clicked = st.button("Run design loop", type="primary")
     with col_right:
         _render_pipeline_storyboard(use_cf=bool(use_cf), use_topk=bool(use_topk and use_cf))
-        st.caption(
-            "ColabFold progress streams in terminal while this panel tracks pipeline status."
-        )
+        st.caption("ColabFold progress streams in the terminal while this panel tracks workflow status.")
 
     if run_clicked:
         wt_p = Path(wt)
@@ -844,7 +903,7 @@ def tab_petase() -> None:
         if rows:
             disp = _petase_results_dataframe(rows)
             st.markdown("#### Leaderboard")
-            st.caption("Columns ordered: generation -> structure -> composite -> SASA / Rg -> ...")
+            st.caption("Columns prioritize generation, structure, composite score, and SASA / Rg metrics.")
             st.dataframe(
                 disp.sort_values("physics.composite", ascending=False).head(50),
                 use_container_width=True,
@@ -855,10 +914,10 @@ def tab_petase() -> None:
 
 
 def tab_structure() -> None:
-    st.subheader("Structure viewer (optional)")
+    st.subheader("Structure Viewer")
     st.caption(
-        "**PyMOL** is a separate desktop app; this tab gives you an **in-browser** preview (py3Dmol) "
-        "plus a small **PyMOL script** you can run locally. It does **not** change ΔΔG predictions."
+        "Preview structures in-browser and export a PyMOL loader script for desktop analysis. "
+        "These visuals are interpretive and do not modify ΔΔG outputs."
     )
     with st.expander("Viewer troubleshooting / diagnostics", expanded=False):
         st.markdown(
@@ -877,9 +936,9 @@ def tab_structure() -> None:
             st.json(format_py3dmol_diagnostics())
         if st.checkbox("Explain Network tab + test 3Dmol.js URL", key="struct_nethelp"):
             render_3dmol_network_help(key_prefix="struct_nethelp")
-    st.markdown("#### Sequence visual helper")
+    st.markdown("#### Sequence Structure Helper")
     seq_input = st.text_area(
-        "Paste amino acid sequence for quick visual model",
+        "Paste amino acid sequence",
         height=110,
         placeholder="MKT...",
         key="structure_seq_input",
@@ -940,13 +999,12 @@ def tab_structure() -> None:
             st.success(helper_source_note or "Loaded curated known PDB for this sequence.")
         else:
             st.caption(
-                "Sequence helper is showing a **pseudo-structure** (fallback mode). "
-                "Different sequences can look like the same tube-like scaffold; "
-                "upload a real PDB for exact geometry."
+                "Fallback pseudo-structure mode is active. Different sequences can share a similar scaffold; "
+                "upload or match a real PDB for experimentally resolved geometry."
             )
             if helper_source_note:
                 st.caption(helper_source_note)
-        st.caption("Soft-motion background preview")
+        st.caption("Background structure preview")
         render_structure_background_motion(helper_pdb, key_prefix="seq_helper_bg")
         with st.expander("Full interactive sequence model", expanded=True):
             render_structure_panel(
@@ -957,7 +1015,7 @@ def tab_structure() -> None:
                 height=620 if st.session_state.get("presentation_mode", False) else 520,
             )
 
-    st.markdown("#### Upload real PDB")
+    st.markdown("#### Upload Experimental / Predicted PDB")
     up = st.file_uploader("Upload PDB", type=["pdb", "ent"], key="pdb_upload")
     if up is not None:
         text = up.getvalue().decode("utf-8", errors="replace")
@@ -981,7 +1039,7 @@ def tab_structure() -> None:
 
 
 def tab_jsonl() -> None:
-    st.subheader("Browse a design JSONL log")
+    st.subheader("JSONL Run Browser")
     path = st.text_input(
         "JSONL path",
         value=str(REPO_ROOT / "petase_design_runs" / "gui_run.jsonl"),
@@ -1035,13 +1093,13 @@ def main() -> None:
         layout="wide",
         initial_sidebar_state="expanded",
     )
-    st.title("ProteinPredictor")
+    st.title("ProteinPredictor Studio")
     with st.sidebar:
-        st.markdown("### View options")
+        st.markdown("### Visual Theme")
         st.session_state["presentation_mode"] = st.checkbox(
             "Presentation mode",
             value=bool(st.session_state.get("presentation_mode", False)),
-            help="Bigger visuals and cleaner cards for demos.",
+            help="Sharper high-contrast theme with stronger panel styling for demos.",
         )
         st.session_state["viz_style_default"] = st.selectbox(
             "Default structure preset",
@@ -1059,8 +1117,8 @@ def main() -> None:
         )
     _apply_presentation_css(bool(st.session_state.get("presentation_mode", False)))
     st.markdown(
-        f"Working directory for paths: `{REPO_ROOT}` — run Streamlit from anywhere, "
-        "but model/FASTA paths are easiest if relative to this folder."
+        f"Working directory for file paths: `{REPO_ROOT}`. "
+        "Model and FASTA paths are easiest when provided relative to this folder."
     )
 
     tab1, tab2, tab3, tab4 = st.tabs(

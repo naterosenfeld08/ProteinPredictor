@@ -441,16 +441,23 @@ Run from the **repository root** (after `pip install -r requirements.txt`):
 streamlit run gui/app.py
 ```
 
-Your browser opens to a local app with **four** tabs:
+The local app opens with **four** primary workspaces:
 
-1. **ΔΔG predict** — paste a sequence, pick the trained `.pkl`, run; includes **FireProt honesty** callout, **z-score vs training stats**, and **uncertainty analysis** (same embedding path as `predict.py fasta`).
-2. **PETase design** — set cycles / mutations / output JSONL; optional **ColabFold** (slow).
-3. **Browse JSONL** — load a design log and sort/filter in a table.
-4. **Structure** — upload a **PDB** for **py3Dmol** in-browser preview (requires `py3dmol` in `requirements.txt`) and download a small **PyMOL** loader script for desktop viewing.
+1. **ΔΔG Prediction** — submit a sequence, choose a trained `.pkl`, and run inference; includes FireProt limitations context, z-score positioning, and uncertainty summary (same embedding path as `predict.py fasta`).
+2. **PETase Design Studio** — configure cycles / mutation count / output JSONL; optionally run **ColabFold** for structure-aware rescoring.
+3. **JSONL Run Browser** — load design logs and inspect sortable analytics tables.
+4. **Structure Viewer** — render in-browser 3D previews from sequence/PDB and export a compact PyMOL loader script.
+
+#### GUI visual language
+
+- High-contrast dark interface with sharp panel edges and typography.
+- Subtle animated blurred background layer for motion without distracting from data.
+- Live structure companion in the prediction flow and live ColabFold gallery updates during design runs.
+- Presentation mode in the sidebar for stronger contrast and demo-ready visuals.
 
 **Structure tab — if the viewer stays blank:** In the embedded page’s DevTools console, `typeof $3Dmol` should not be `"undefined"`. The app loads **3Dmol.js** from **`https://3dmol.csb.pitt.edu/build/3Dmol-min.js`** by default. If your network blocks it, set environment variable **`PY3DMOL_JS_URL`** to another HTTPS URL for `3Dmol-min.js`, or **`PY3DMOL_JS_FILE`** to a local path (the app serves it over loopback). Expand **Structure troubleshooting** in the app for the exact URL in use.
 
-**Tip:** On macOS you can double-click **`scripts/launch_gui.command`** (activates `.venv/` or `venv/` if present, then runs Streamlit). Or run the `streamlit` line from any terminal.
+**Tip:** On macOS you can double-click **`scripts/launch_gui.command`** (activates `.venv/` or `venv/` if present, then runs Streamlit), or run the `streamlit` command from any terminal.
 
 **If the browser says “Is Streamlit still running?”:** long embeddings used to block the Streamlit process. The GUI now runs **ΔΔG prediction** and **PETase design** in **separate Python subprocesses** (`gui/predict_worker.py`, `gui/design_worker.py`) so the server stays responsive. **Watch the terminal** where `streamlit run` is running for Hugging Face / model download and embedding logs. Keep the tab open until the green success message appears.
 

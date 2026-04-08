@@ -281,7 +281,7 @@ def _default_model_path() -> str:
 
 
 def tab_predict() -> None:
-    st.subheader("ΔΔG Prediction")
+    st.subheader("Single-Sequence Analysis")
     render_fireprot_honesty_callout()
     st.caption(
         "Runs your trained ensemble with PLM embeddings. The first execution may download "
@@ -544,7 +544,7 @@ def _render_run_report_cards(summary: dict) -> None:
     top = summary.get("top_variants") or []
     if top:
         st.caption("Top 10 variants from the run summary")
-        st.dataframe(pd.DataFrame(top), use_container_width=True, height=280)
+        st.dataframe(pd.DataFrame(top), width="stretch", height=280)
 
 
 def _render_phase2_analytics(rows: list[dict], *, key_prefix: str) -> None:
@@ -578,7 +578,7 @@ def _render_phase2_analytics(rows: list[dict], *, key_prefix: str) -> None:
             st.line_chart(
                 trend.set_index("generation")[["composite_mean", "composite_best"]],
                 height=230,
-                use_container_width=True,
+                width="stretch",
             )
 
     s1, s2 = st.columns(2)
@@ -592,7 +592,7 @@ def _render_phase2_analytics(rows: list[dict], *, key_prefix: str) -> None:
                     x="x",
                     y="y",
                     height=260,
-                    use_container_width=True,
+                    width="stretch",
                 )
     with s2:
         if {"physics.sasa_total_area", "physics.composite"}.issubset(df.columns):
@@ -604,7 +604,7 @@ def _render_phase2_analytics(rows: list[dict], *, key_prefix: str) -> None:
                     x="x",
                     y="y",
                     height=260,
-                    use_container_width=True,
+                    width="stretch",
                 )
 
     numeric_cols = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])]
@@ -625,13 +625,13 @@ def _render_phase2_analytics(rows: list[dict], *, key_prefix: str) -> None:
                 for iv in counts.index
             ]
             hist_df = pd.DataFrame({"bin": labels, "count": counts.to_numpy()}).set_index("bin")
-            st.bar_chart(hist_df, height=220, use_container_width=True)
+            st.bar_chart(hist_df, height=220, width="stretch")
 
     corr_cols = [c for c in numeric_cols if c.startswith("physics.")]
     if len(corr_cols) >= 2:
         st.caption("Correlation matrix (physics features)")
         corr = df[corr_cols].corr(numeric_only=True).round(3)
-        st.dataframe(corr, use_container_width=True, height=260)
+        st.dataframe(corr, width="stretch", height=260)
 
 
 def _render_last_petase_summary() -> None:
@@ -715,8 +715,8 @@ def _render_variant_detail_drawer(rows: list[dict]) -> None:
 
 
 def tab_petase() -> None:
-    st.subheader("PETase Design Studio")
-    st.caption("Configure variant generation, optional ColabFold structure passes, and ranking analytics.")
+    st.subheader("PETase Batch Design")
+    st.caption("Configure variant generation, optional ColabFold structure passes, and hybrid reranking analytics.")
     _render_last_petase_summary()
 
     col_left, col_right = st.columns([1.1, 1.3], gap="large")
@@ -986,7 +986,7 @@ def tab_petase() -> None:
                 disp.sort_values("hybrid_score", ascending=False).head(50)
                 if "hybrid_score" in disp.columns
                 else disp.sort_values("physics.composite", ascending=False).head(50),
-                use_container_width=True,
+                width="stretch",
                 height=420,
             )
             _render_phase2_analytics(rows, key_prefix="petase_run")
@@ -1146,7 +1146,7 @@ def tab_jsonl() -> None:
         if summary:
             _render_run_report_cards(summary)
         df = _petase_results_dataframe(rows)
-        st.dataframe(df, use_container_width=True, height=400)
+        st.dataframe(df, width="stretch", height=400)
 
         numeric_cols = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])]
         sort_col = st.selectbox(
@@ -1157,9 +1157,23 @@ def tab_jsonl() -> None:
         if sort_col in df.columns:
             st.dataframe(
                 df.sort_values(sort_col, ascending=False).head(100),
-                use_container_width=True,
+                width="stretch",
             )
         _render_phase2_analytics(rows, key_prefix="jsonl_browse")
+
+
+def tab_design_prediction() -> None:
+    """Unified workspace: single-sequence analysis + PETase batch design."""
+    st.markdown("### Unified Workflow")
+    st.caption(
+        "Use single-sequence analysis for focused ddG/structure inspection, "
+        "then run PETase batch design with hybrid reranking for candidate discovery."
+    )
+    with st.expander("A) Single-sequence analysis", expanded=True):
+        tab_predict()
+    st.markdown("---")
+    with st.expander("B) PETase batch design", expanded=True):
+        tab_petase()
 
 
 def main() -> None:
@@ -1175,12 +1189,10 @@ def main() -> None:
         "Model and FASTA paths are easiest when provided relative to this folder."
     )
 
-    tab1, tab2, tab3 = st.tabs(["ΔΔG predict", "PETase design", "Browse JSONL"])
+    tab1, tab2 = st.tabs(["Design + Prediction", "Browse JSONL"])
     with tab1:
-        tab_predict()
+        tab_design_prediction()
     with tab2:
-        tab_petase()
-    with tab3:
         tab_jsonl()
 
 

@@ -16,6 +16,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+from typing import Callable
 
 # Repo root on sys.path *before* `from gui.*` (Streamlit loads this file with cwd ≠ repo).
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -69,6 +70,7 @@ def _poll_subprocess_with_ui(
     detail: str,
     hint_terminal: str = "",
     stages: list[str] | None = None,
+    on_tick: Callable[[int, float], None] | None = None,
 ) -> int:
     """
     Wait for a child process while refreshing Streamlit UI.
@@ -106,8 +108,93 @@ def _poll_subprocess_with_ui(
             f"**Leave this tab open** and check the **terminal** where you ran "
             f"`streamlit run` for download / embedding progress.{extra}{stage_block}"
         )
+        if on_tick is not None:
+            try:
+                on_tick(tick, elapsed)
+            except Exception:
+                # Live visuals are best-effort and should never interrupt a run.
+                pass
     slot.empty()
     return int(proc.returncode or 0)
+
+
+def _build_sequence_visual_payload(seq: str) -> dict[str, str] | None:
+    """Resolve best-effort structure payload for a typed sequence."""
+    clean = sanitize_sequence(seq)
+    if len(clean) < 20:
+        return None
+    known = find_known_structure_match(clean)
+    if known:
+        pdb_text, err = fetch_known_structure_pdb(known)
+        if pdb_text:
+            return {
+                "mode": "known_pdb",
+                "title": f"{known.get('name', 'Known structure')} ({known.get('pdb_id', '?')}:{known.get('chain', '?')})",
+                "detail": known.get("match_detail", "Matched curated known structure."),
+                "pdb_text": pdb_text,
+            }
+        return {
+            "mode": "pseudo_fallback",
+            "title": "Known structure match (download failed)",
+            "detail": f"{known.get('match_detail', '')} PDB fetch failed: {err}",
+            "pdb_text": build_pseudo_pdb_from_sequence(clean),
+        }
+    return {
+        "mode": "pseudo",
+        "title": "Pseudo structure preview",
+        "detail": "No curated known-structure match; showing a pseudo model while prediction runs.",
+        "pdb_text": build_pseudo_pdb_from_sequence(clean),
+    }
+
+
+def _discover_recent_structure_paths(root: Path, *, max_items: int = 6) -> list[Path]:
+    """Find recent structure files emitted by ColabFold jobs."""
+    if not root.exists():
+        return []
+    out: list[Path] = []
+    patterns = ("**/*.pdb", "**/*.cif")
+    for pat in patterns:
+        out.extend(root.glob(pat))
+    files = [p for p in out if p.is_file()]
+    files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    dedup: list[Path] = []
+    seen: set[str] = set()
+    for p in files:
+        s = str(p.resolve())
+        if s in seen:
+            continue
+        seen.add(s)
+        dedup.append(p)
+        if len(dedup) >= max_items:
+            break
+    return dedup
+
+
+def _render_live_colabfold_gallery(container: st.delta_generator.DeltaGenerator, root: Path) -> None:
+    """Render the freshest discovered ColabFold structures in a compact gallery."""
+    with container.container():
+        paths = _discover_recent_structure_paths(root, max_items=3)
+        if not paths:
+            st.caption("Live ColabFold gallery: waiting for first structure file...")
+            return
+        st.caption(f"Live ColabFold gallery: {len(paths)} recent structure file(s) discovered.")
+        for i, p in enumerate(paths, start=1):
+            try:
+                text = p.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            if "ATOM" not in text and "HETATM" not in text:
+                continue
+            with st.expander(f"Model {i}: {p.name}", expanded=(i == 1)):
+                render_structure_panel(
+                    text,
+                    key_prefix=f"live_cf_{i}_{p.stem}",
+                    show_controls=False,
+                    default_style=st.session_state.get("viz_style_default", "cartoon_amino"),
+                    default_spin=True,
+                    height=380 if st.session_state.get("presentation_mode", False) else 320,
+                    show_troubleshoot_caption=False,
+                )
 
 
 def _default_model_path() -> str:
@@ -163,6 +250,26 @@ def tab_predict() -> None:
         placeholder="MKT...",
     )
     use_comp = st.checkbox("Append composition features (20 AA frequencies)", value=True)
+    payload = _build_sequence_visual_payload(sequence)
+    if payload and payload.get("pdb_text"):
+        st.markdown("#### Live structural companion")
+        st.caption(
+            "While prediction computes embeddings, this panel previews the best available structure "
+            "for your input sequence (curated known PDB when matched; otherwise pseudo fallback)."
+        )
+        if payload.get("mode") == "known_pdb":
+            st.success(f"{payload.get('title', 'Known structure')} — {payload.get('detail', '')}")
+        else:
+            st.info(f"{payload.get('title', 'Preview')} — {payload.get('detail', '')}")
+        render_structure_background_motion(payload["pdb_text"], key_prefix="predict_live_bg")
+        with st.expander("Interactive structural companion", expanded=False):
+            render_structure_panel(
+                payload["pdb_text"],
+                key_prefix="predict_live_full",
+                default_style=st.session_state.get("viz_style_default", "cartoon_amino"),
+                default_spin=True,
+                height=520 if st.session_state.get("presentation_mode", False) else 440,
+            )
 
     if st.button("Run prediction", type="primary"):
         if not model_path or not Path(model_path).is_file():
@@ -625,6 +732,15 @@ def tab_petase() -> None:
                 cmd.append("--colabfold-overwrite")
 
         try:
+            live_gallery_slot = st.empty()
+
+            def _on_tick_live_gallery(tick: int, _elapsed: float) -> None:
+                if not use_cf:
+                    return
+                if tick % 8 != 0:
+                    return
+                _render_live_colabfold_gallery(live_gallery_slot, work_root)
+
             proc = subprocess.Popen(cmd, cwd=str(REPO_ROOT))
             code = _poll_subprocess_with_ui(
                 proc,
@@ -637,6 +753,7 @@ def tab_petase() -> None:
                     "ColabFold jobs" if use_cf else "Skip structures",
                     "Finalize outputs",
                 ],
+                on_tick=_on_tick_live_gallery,
             )
             raw = ""
             try:

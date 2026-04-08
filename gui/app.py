@@ -42,48 +42,33 @@ from gui.structure_view import (
     render_structure_panel,
 )
 
+DEFAULT_VIZ_STYLE = "cartoon_sticks"
+DEFAULT_VIZ_SPIN = False
 
-def _apply_presentation_css(enabled: bool) -> None:
-    panel_radius = "0px" if enabled else "2px"
-    panel_border = "rgba(255,255,255,0.20)" if enabled else "rgba(255,255,255,0.14)"
-    panel_blur = "16px" if enabled else "10px"
-    panel_bg = "rgba(8,8,10,0.86)" if enabled else "rgba(10,10,12,0.80)"
-    header_tracking = "0.9px" if enabled else "0.5px"
+
+def _apply_presentation_css() -> None:
+    panel_radius = "2px"
+    panel_border = "rgba(255,255,255,0.16)"
+    panel_blur = "4px"
+    panel_bg = "rgba(7,7,8,0.86)"
+    header_tracking = "0.04em"
     st.markdown(
         f"""
 <style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;700&display=swap');
+
 :root {{
   --pp-panel-bg: {panel_bg};
   --pp-panel-border: {panel_border};
   --pp-panel-radius: {panel_radius};
   --pp-panel-blur: {panel_blur};
+  --pp-text: #f5f6f8;
+  --pp-muted: #9ba0aa;
 }}
 
-/* Sleek black animated blurred background */
+/* Clean dark scientific theme */
 [data-testid="stAppViewContainer"] {{
-  background: radial-gradient(1600px 700px at -10% -20%, rgba(90,90,120,0.18), transparent 60%),
-              radial-gradient(1100px 560px at 120% 10%, rgba(60,100,160,0.14), transparent 55%),
-              #040405;
-}}
-[data-testid="stAppViewContainer"]::before {{
-  content: "";
-  position: fixed;
-  inset: -18vh -12vw;
-  z-index: 0;
-  pointer-events: none;
-  filter: blur(42px);
-  opacity: 0.42;
-  background: conic-gradient(from 0deg at 30% 30%,
-    rgba(120, 120, 210, 0.22),
-    rgba(90, 160, 210, 0.18),
-    rgba(60, 90, 130, 0.15),
-    rgba(120, 120, 210, 0.22));
-  animation: pp-slow-drift 36s linear infinite;
-}}
-@keyframes pp-slow-drift {{
-  0% {{ transform: translate3d(-2%, -1%, 0) rotate(0deg) scale(1.05); }}
-  50% {{ transform: translate3d(2%, 1%, 0) rotate(180deg) scale(1.08); }}
-  100% {{ transform: translate3d(-2%, -1%, 0) rotate(360deg) scale(1.05); }}
+  background: radial-gradient(900px 380px at 10% 0%, rgba(100,120,150,0.08), transparent 55%), #030304;
 }}
 
 [data-testid="stAppViewContainer"] > .main {{
@@ -91,16 +76,21 @@ def _apply_presentation_css(enabled: bool) -> None:
   z-index: 1;
 }}
 .block-container {{
-  padding-top: 1.0rem;
+  padding-top: 1.1rem;
   padding-bottom: 1.3rem;
+  max-width: 1400px;
 }}
 h1, h2, h3 {{
+  font-family: "Space Grotesk", "Inter", "Segoe UI", Arial, sans-serif;
   letter-spacing: {header_tracking};
-  text-transform: uppercase;
+  text-transform: none;
   font-weight: 700;
+  color: var(--pp-text);
+  line-height: 1.14;
 }}
 p, li, label, span, div {{
-  font-family: Inter, "SF Pro Display", "Segoe UI", Arial, sans-serif;
+  font-family: "Inter", "SF Pro Display", "Segoe UI", Arial, sans-serif;
+  color: var(--pp-text);
 }}
 
 /* Panels and cards */
@@ -117,6 +107,24 @@ div[data-testid="stMetric"] {{
 }}
 button, [data-baseweb="select"] > div, textarea, input {{
   border-radius: 0 !important;
+  border-color: rgba(255,255,255,0.22) !important;
+}}
+
+/* Tabs */
+button[data-baseweb="tab"] {{
+  border-radius: 0 !important;
+  letter-spacing: 0.03em;
+  text-transform: none;
+  font-size: 0.72rem;
+  border: 1px solid transparent !important;
+}}
+button[data-baseweb="tab"][aria-selected="true"] {{
+  border: 1px solid rgba(255,255,255,0.32) !important;
+  background: rgba(255,255,255,0.05) !important;
+}}
+[data-testid="stSidebar"] {{
+  background: #060607;
+  border-right: 1px solid rgba(255,255,255,0.12);
 }}
 </style>
         """,
@@ -251,9 +259,9 @@ def _render_live_colabfold_gallery(container: st.delta_generator.DeltaGenerator,
                     text,
                     key_prefix=f"live_cf_{i}_{p.stem}",
                     show_controls=False,
-                    default_style=st.session_state.get("viz_style_default", "cartoon_amino"),
+                    default_style=DEFAULT_VIZ_STYLE,
                     default_spin=True,
-                    height=380 if st.session_state.get("presentation_mode", False) else 320,
+                    height=360,
                     show_troubleshoot_caption=False,
                 )
 
@@ -327,9 +335,9 @@ def tab_predict() -> None:
             render_structure_panel(
                 payload["pdb_text"],
                 key_prefix="predict_live_full",
-                default_style=st.session_state.get("viz_style_default", "cartoon_amino"),
+                default_style=DEFAULT_VIZ_STYLE,
                 default_spin=True,
-                height=520 if st.session_state.get("presentation_mode", False) else 440,
+                height=460,
             )
 
     if st.button("Run prediction", type="primary"):
@@ -462,6 +470,9 @@ def tab_predict() -> None:
             "length": len(seq),
             "raw": p0,
         }
+
+    st.markdown("---")
+    _render_structure_workspace(key_prefix="predict")
 
 
 def _petase_results_dataframe(rows: list) -> pd.DataFrame:
@@ -685,9 +696,9 @@ def _render_variant_detail_drawer(rows: list[dict]) -> None:
             render_structure_panel(
                 pdb_text,
                 key_prefix=f"drawer_{selected}",
-                default_style=st.session_state.get("viz_style_default", "cartoon_amino"),
-                default_spin=bool(st.session_state.get("viz_spin_default", False)),
-                height=560 if st.session_state.get("presentation_mode", False) else 500,
+                default_style=DEFAULT_VIZ_STYLE,
+                default_spin=DEFAULT_VIZ_SPIN,
+                height=500,
             )
         else:
             st.warning(f"Structure path not found on disk: `{p}`")
@@ -913,38 +924,27 @@ def tab_petase() -> None:
             _render_variant_detail_drawer(rows)
 
 
-def tab_structure() -> None:
-    st.subheader("Structure Viewer")
+def _render_structure_workspace(*, key_prefix: str = "predict") -> None:
+    """Unified structure workflow (sequence helper + manual PDB upload)."""
+    st.markdown("#### Structure Workspace")
     st.caption(
-        "Preview structures in-browser and export a PyMOL loader script for desktop analysis. "
-        "These visuals are interpretive and do not modify ΔΔG outputs."
+        "Use a sequence or an uploaded PDB to inspect structure. "
+        "Known curated sequences load resolved structures automatically."
     )
-    with st.expander("Viewer troubleshooting / diagnostics", expanded=False):
-        st.markdown(
-            "The viewer is embedded as **`components.iframe(src=http://127.0.0.1:…/viewer_….html)`** — a real page on loopback, "
-            "not Streamlit’s `srcdoc` blob (which often stays blank with WebGL). "
-            "By default the app **mirrors** `3Dmol-min.js` from the CDN onto that same loopback origin "
-            "so the script is **not** cross-origin (Safari/Firefox/Brave often block third-party script in nested iframes). "
-            "**`PY3DMOL_JS_FILE`** still copies your file to **`3Dmol-min.js`**. "
-            "**`PY3DMOL_JS_URL`** is mirrored the same way. Set **`PY3DMOL_NO_MIRROR=1`** to force a remote `js=` URL. "
-            "If it still fails, use **Download standalone viewer**. "
-            "Permissions-Policy console noise from Streamlit is usually harmless.  \n\n"
-            "**Console trap:** py3Dmol defines **`viewer_<timestamp>`**, not `viewer`. "
-            "`viewer.getModel()` will throw **ReferenceError** even when the viewer is fine."
-        )
-        if st.checkbox("Show py3Dmol environment diagnostics", key="struct_diag"):
+    with st.expander("Viewer diagnostics", expanded=False):
+        if st.checkbox("Show 3D environment diagnostics", key=f"{key_prefix}_struct_diag"):
             st.json(format_py3dmol_diagnostics())
-        if st.checkbox("Explain Network tab + test 3Dmol.js URL", key="struct_nethelp"):
-            render_3dmol_network_help(key_prefix="struct_nethelp")
-    st.markdown("#### Sequence Structure Helper")
+        if st.checkbox("Explain network context + test 3Dmol URL", key=f"{key_prefix}_struct_nethelp"):
+            render_3dmol_network_help(key_prefix=f"{key_prefix}_struct_nethelp")
+
     seq_input = st.text_area(
-        "Paste amino acid sequence",
-        height=110,
+        "Sequence input",
+        height=100,
         placeholder="MKT...",
-        key="structure_seq_input",
+        key=f"{key_prefix}_sequence_input",
     )
     seq_col1, seq_col2 = st.columns([1, 2.2])
-    if seq_col1.button("Build sequence model", key="build_seq_model"):
+    if seq_col1.button("Build sequence structure", key=f"{key_prefix}_build_seq_model"):
         clean = sanitize_sequence(seq_input)
         if len(clean) < 20:
             st.error("Please provide at least 20 amino acids.")
@@ -954,6 +954,7 @@ def tab_structure() -> None:
                 petase_wt_fasta=REPO_ROOT / "petase_design" / "data" / "petase_6eqd_chainA_notag.fasta",
             )
             known = find_known_structure_match(clean)
+            base = f"{key_prefix}_sequence_helper"
             if known:
                 pdb_text, err = fetch_known_structure_pdb(known)
                 if pdb_text:
@@ -965,9 +966,9 @@ def tab_structure() -> None:
                             f"Using PDB {known.get('pdb_id', '?')} chain {known.get('chain', '?')}."
                         ).strip(),
                     }
-                    st.session_state["sequence_helper_pdb"] = pdb_text
-                    st.session_state["sequence_helper_source"] = "known_pdb"
-                    st.session_state["sequence_helper_source_note"] = (
+                    st.session_state[f"{base}_pdb"] = pdb_text
+                    st.session_state[f"{base}_source"] = "known_pdb"
+                    st.session_state[f"{base}_source_note"] = (
                         f"Matched **{known.get('name', 'known structure')}** "
                         f"-> PDB **{known.get('pdb_id', '?')}** chain **{known.get('chain', '?')}**."
                     )
@@ -976,47 +977,41 @@ def tab_structure() -> None:
                         "Matched a known sequence but could not download its PDB; "
                         f"falling back to pseudo model. ({err})"
                     )
-                    st.session_state["sequence_helper_pdb"] = build_pseudo_pdb_from_sequence(clean)
-                    st.session_state["sequence_helper_source"] = "pseudo"
-                    st.session_state["sequence_helper_source_note"] = (
+                    st.session_state[f"{base}_pdb"] = build_pseudo_pdb_from_sequence(clean)
+                    st.session_state[f"{base}_source"] = "pseudo"
+                    st.session_state[f"{base}_source_note"] = (
                         "Pseudo model fallback (known structure download failed)."
                     )
             else:
-                st.session_state["sequence_helper_pdb"] = build_pseudo_pdb_from_sequence(clean)
-                st.session_state["sequence_helper_source"] = "pseudo"
-                st.session_state["sequence_helper_source_note"] = (
-                    "Pseudo model (no curated known-structure match)."
-                )
-            st.session_state["sequence_helper_ident"] = ident
-    ident = st.session_state.get("sequence_helper_ident")
-    helper_pdb = st.session_state.get("sequence_helper_pdb")
-    helper_source = st.session_state.get("sequence_helper_source", "pseudo")
-    helper_source_note = st.session_state.get("sequence_helper_source_note", "")
+                st.session_state[f"{base}_pdb"] = build_pseudo_pdb_from_sequence(clean)
+                st.session_state[f"{base}_source"] = "pseudo"
+                st.session_state[f"{base}_source_note"] = "Pseudo model (no curated known-structure match)."
+            st.session_state[f"{base}_ident"] = ident
+
+    base = f"{key_prefix}_sequence_helper"
+    ident = st.session_state.get(f"{base}_ident")
+    helper_pdb = st.session_state.get(f"{base}_pdb")
+    helper_source = st.session_state.get(f"{base}_source", "pseudo")
+    helper_source_note = st.session_state.get(f"{base}_source_note", "")
     if ident and isinstance(ident, dict):
         seq_col2.info(f"Sequence ID: **{ident.get('label','unknown')}** — {ident.get('detail','')}")
     if helper_pdb and isinstance(helper_pdb, str):
         if helper_source == "known_pdb":
             st.success(helper_source_note or "Loaded curated known PDB for this sequence.")
-        else:
-            st.caption(
-                "Fallback pseudo-structure mode is active. Different sequences can share a similar scaffold; "
-                "upload or match a real PDB for experimentally resolved geometry."
-            )
-            if helper_source_note:
-                st.caption(helper_source_note)
-        st.caption("Background structure preview")
-        render_structure_background_motion(helper_pdb, key_prefix="seq_helper_bg")
-        with st.expander("Full interactive sequence model", expanded=True):
+        elif helper_source_note:
+            st.caption(helper_source_note)
+        render_structure_background_motion(helper_pdb, key_prefix=f"{key_prefix}_seq_bg")
+        with st.expander("Interactive sequence structure", expanded=True):
             render_structure_panel(
                 helper_pdb,
-                key_prefix="seq_helper_full",
-                default_style=st.session_state.get("viz_style_default", "cartoon_amino"),
+                key_prefix=f"{key_prefix}_seq_full",
+                default_style=DEFAULT_VIZ_STYLE,
                 default_spin=True,
-                height=620 if st.session_state.get("presentation_mode", False) else 520,
+                height=520,
             )
 
-    st.markdown("#### Upload Experimental / Predicted PDB")
-    up = st.file_uploader("Upload PDB", type=["pdb", "ent"], key="pdb_upload")
+    st.markdown("#### Upload PDB")
+    up = st.file_uploader("Upload PDB file", type=["pdb", "ent"], key=f"{key_prefix}_pdb_upload")
     if up is not None:
         text = up.getvalue().decode("utf-8", errors="replace")
         if "ATOM" not in text and "HETATM" not in text:
@@ -1024,17 +1019,17 @@ def tab_structure() -> None:
             return
         render_structure_panel(
             text,
-            key_prefix="main",
-            default_style=st.session_state.get("viz_style_default", "cartoon_amino"),
-            default_spin=bool(st.session_state.get("viz_spin_default", False)),
-            height=620 if st.session_state.get("presentation_mode", False) else 500,
+            key_prefix=f"{key_prefix}_uploaded",
+            default_style=DEFAULT_VIZ_STYLE,
+            default_spin=DEFAULT_VIZ_SPIN,
+            height=500,
         )
         st.download_button(
             "Download uploaded PDB",
             data=text.encode("utf-8"),
             file_name=up.name or "structure.pdb",
             mime="chemical/x-pdb",
-            key="dl_pdb",
+            key=f"{key_prefix}_dl_pdb",
         )
 
 
@@ -1046,7 +1041,7 @@ def tab_jsonl() -> None:
     )
     max_rows = st.number_input("Max rows to load", min_value=10, max_value=50_000, value=2000)
 
-    if st.button("Load"):
+    if st.button("Load", key="jsonl_load_btn"):
         p = Path(path)
         if not p.is_file():
             st.error("File not found.")
@@ -1066,18 +1061,29 @@ def tab_jsonl() -> None:
         if not rows:
             st.warning("No rows parsed.")
             return
-        summary = _load_run_summary_for_jsonl(p)
+        st.session_state["jsonl_loaded_rows"] = rows
+        st.session_state["jsonl_loaded_path"] = str(p.resolve())
+        st.session_state["jsonl_loaded_summary"] = _load_run_summary_for_jsonl(p)
+
+    rows = st.session_state.get("jsonl_loaded_rows")
+    loaded_path = st.session_state.get("jsonl_loaded_path")
+    if rows and loaded_path:
+        st.caption(f"Loaded file: `{loaded_path}`")
+        if st.button("Clear loaded data", key="jsonl_clear_btn"):
+            for k in ("jsonl_loaded_rows", "jsonl_loaded_path", "jsonl_loaded_summary"):
+                st.session_state.pop(k, None)
+            st.rerun()
+        summary = st.session_state.get("jsonl_loaded_summary")
         if summary:
             _render_run_report_cards(summary)
         df = _petase_results_dataframe(rows)
         st.dataframe(df, use_container_width=True, height=400)
 
-        numeric_cols = [
-            c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])
-        ]
+        numeric_cols = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])]
         sort_col = st.selectbox(
             "Sort by",
             options=numeric_cols if numeric_cols else list(df.columns),
+            key="jsonl_sort_col",
         )
         if sort_col in df.columns:
             st.dataframe(
@@ -1093,45 +1099,20 @@ def main() -> None:
         layout="wide",
         initial_sidebar_state="expanded",
     )
-    st.title("ProteinPredictor Studio")
-    with st.sidebar:
-        st.markdown("### Visual Theme")
-        st.session_state["presentation_mode"] = st.checkbox(
-            "Presentation mode",
-            value=bool(st.session_state.get("presentation_mode", False)),
-            help="Sharper high-contrast theme with stronger panel styling for demos.",
-        )
-        st.session_state["viz_style_default"] = st.selectbox(
-            "Default structure preset",
-            options=["cartoon_amino", "cartoon_chain", "cartoon_sticks", "surface"],
-            index=["cartoon_amino", "cartoon_chain", "cartoon_sticks", "surface"].index(
-                st.session_state.get("viz_style_default", "cartoon_amino")
-            )
-            if st.session_state.get("viz_style_default", "cartoon_amino")
-            in {"cartoon_amino", "cartoon_chain", "cartoon_sticks", "surface"}
-            else 0,
-        )
-        st.session_state["viz_spin_default"] = st.checkbox(
-            "Default auto-rotate structures",
-            value=bool(st.session_state.get("viz_spin_default", False)),
-        )
-    _apply_presentation_css(bool(st.session_state.get("presentation_mode", False)))
+    _apply_presentation_css()
+    st.title("ProteinPredictor")
     st.markdown(
         f"Working directory for file paths: `{REPO_ROOT}`. "
         "Model and FASTA paths are easiest when provided relative to this folder."
     )
 
-    tab1, tab2, tab3, tab4 = st.tabs(
-        ["ΔΔG predict", "PETase design", "Browse JSONL", "Structure"]
-    )
+    tab1, tab2, tab3 = st.tabs(["ΔΔG predict", "PETase design", "Browse JSONL"])
     with tab1:
         tab_predict()
     with tab2:
         tab_petase()
     with tab3:
         tab_jsonl()
-    with tab4:
-        tab_structure()
 
 
 if __name__ == "__main__":

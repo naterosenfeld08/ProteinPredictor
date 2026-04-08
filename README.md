@@ -441,21 +441,19 @@ Run from the **repository root** (after `pip install -r requirements.txt`):
 streamlit run gui/app.py
 ```
 
-The local app opens with **four** primary workspaces:
+The local app opens with **three** primary workspaces:
 
 1. **ΔΔG Prediction** — submit a sequence, choose a trained `.pkl`, and run inference; includes FireProt limitations context, z-score positioning, and uncertainty summary (same embedding path as `predict.py fasta`).
-2. **PETase Design Studio** — configure cycles / mutation count / output JSONL; optionally run **ColabFold** for structure-aware rescoring.
+2. **PETase Design Studio** — configure cycles / mutation count / output JSONL; optionally run **ColabFold** for structure-aware rescoring and optional ddG-guided hybrid reranking.
 3. **JSONL Run Browser** — load design logs and inspect sortable analytics tables.
-4. **Structure Viewer** — render in-browser 3D previews from sequence/PDB and export a compact PyMOL loader script.
 
 #### GUI visual language
 
 - High-contrast dark interface with sharp panel edges and typography.
-- Subtle animated blurred background layer for motion without distracting from data.
 - Live structure companion in the prediction flow and live ColabFold gallery updates during design runs.
-- Presentation mode in the sidebar for stronger contrast and demo-ready visuals.
+- Structure workflow is consolidated into the prediction workspace (no separate Structure tab).
 
-**Structure tab — if the viewer stays blank:** In the embedded page’s DevTools console, `typeof $3Dmol` should not be `"undefined"`. The app loads **3Dmol.js** from **`https://3dmol.csb.pitt.edu/build/3Dmol-min.js`** by default. If your network blocks it, set environment variable **`PY3DMOL_JS_URL`** to another HTTPS URL for `3Dmol-min.js`, or **`PY3DMOL_JS_FILE`** to a local path (the app serves it over loopback). Expand **Structure troubleshooting** in the app for the exact URL in use.
+**Structure viewer diagnostics (inside ΔΔG Prediction workspace):** In the embedded page’s DevTools console, `typeof $3Dmol` should not be `"undefined"`. The app loads **3Dmol.js** from **`https://3dmol.csb.pitt.edu/build/3Dmol-min.js`** by default. If your network blocks it, set environment variable **`PY3DMOL_JS_URL`** to another HTTPS URL for `3Dmol-min.js`, or **`PY3DMOL_JS_FILE`** to a local path (the app serves it over loopback). Expand the viewer diagnostics panel in the app for the exact URL in use.
 
 **Tip:** On macOS you can double-click **`scripts/launch_gui.command`** (activates `.venv/` or `venv/` if present, then runs Streamlit), or run the `streamlit` command from any terminal.
 
@@ -489,6 +487,7 @@ In-silico loop for **theoretical IsPETase-like variants**: random mutations → 
 - **Run:** `python -m petase_design.run --cycles 100 --mutations 3 --out petase_design_runs/log.jsonl`
 - **Local ColabFold:** `python -m petase_design.run --colabfold --cycles …` (needs `colabfold_batch` on `PATH`; see [`docs/COLABFOLD_LOCAL.md`](docs/COLABFOLD_LOCAL.md))
 - **Efficiency mode (new):** `--structure-top-k K` with `--colabfold` does two-stage ranking: cheap sequence-only score for all proposals, then ColabFold only on top-`K` variants.
+- **Hybrid reranking (GUI worker path):** PETase runs can apply ddG-guided stage-2 reranking on a survivor subset with configurable budget, 70/20/10 survivor lanes (cheap/diversity/rescue), and uncertainty-adjusted hybrid scoring.
 - **SASA (P2):** `pip install -r petase_design/requirements-extras.txt` — when a ranked **PDB** exists, `physics_score` adds **FreeSASA** polar/apolar breakdown into the composite (`petase_design/sasa_utils.py`).
 - **Next hooks:** **OpenMM** minimization stub in `petase_design/openmm_energy.py`
 

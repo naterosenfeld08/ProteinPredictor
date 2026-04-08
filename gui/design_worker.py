@@ -13,6 +13,7 @@ import json
 import shlex
 import sys
 import tempfile
+import time
 import traceback
 from pathlib import Path
 
@@ -81,7 +82,8 @@ def _collect_ddg_survivors(
         buckets: dict[int, list[int]] = {}
         for idx in remaining:
             seq = str(rows[idx].get("sequence", ""))
-            b = hash(seq) % 11
+            # Deterministic bucket id (do not use Python's process-randomized hash()).
+            b = sum((i + 1) * ord(ch) for i, ch in enumerate(seq)) % 11
             buckets.setdefault(b, []).append(idx)
         picks_b: list[int] = []
         keys = sorted(buckets.keys())
@@ -179,6 +181,7 @@ def main() -> int:
 
     out_result = Path(args.result_json)
 
+    t0 = time.time()
     try:
         from petase_design.pipeline import run_design_cycles
         from petase_design.run_summary import write_run_summary_json
@@ -313,8 +316,8 @@ def main() -> int:
             write_run_summary_json(
                 args.out_jsonl,
                 rows,
-                t0=0.0,
-                t1=0.0,
+                t0=t0,
+                t1=time.time(),
                 meta={
                     "wt_fasta": str(args.wt_fasta),
                     "n_cycles": int(args.cycles),

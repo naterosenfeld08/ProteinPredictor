@@ -29,6 +29,8 @@ import streamlit as st
 from gui.insights import render_fireprot_honesty_callout, render_prediction_analytics
 from gui.sequence_structure_helper import (
     build_pseudo_pdb_from_sequence,
+    fetch_known_structure_pdb,
+    find_known_structure_match,
     identify_sequence,
     sanitize_sequence,
 )
@@ -775,18 +777,58 @@ def tab_structure() -> None:
                 clean,
                 petase_wt_fasta=REPO_ROOT / "petase_design" / "data" / "petase_6eqd_chainA_notag.fasta",
             )
+            known = find_known_structure_match(clean)
+            if known:
+                pdb_text, err = fetch_known_structure_pdb(known)
+                if pdb_text:
+                    ident = {
+                        "label": f"{ident.get('label', 'custom_sequence')} + known_structure",
+                        "detail": (
+                            f"{ident.get('detail', '')} "
+                            f"{known.get('match_detail', '')} "
+                            f"Using PDB {known.get('pdb_id', '?')} chain {known.get('chain', '?')}."
+                        ).strip(),
+                    }
+                    st.session_state["sequence_helper_pdb"] = pdb_text
+                    st.session_state["sequence_helper_source"] = "known_pdb"
+                    st.session_state["sequence_helper_source_note"] = (
+                        f"Matched **{known.get('name', 'known structure')}** "
+                        f"-> PDB **{known.get('pdb_id', '?')}** chain **{known.get('chain', '?')}**."
+                    )
+                else:
+                    st.warning(
+                        "Matched a known sequence but could not download its PDB; "
+                        f"falling back to pseudo model. ({err})"
+                    )
+                    st.session_state["sequence_helper_pdb"] = build_pseudo_pdb_from_sequence(clean)
+                    st.session_state["sequence_helper_source"] = "pseudo"
+                    st.session_state["sequence_helper_source_note"] = (
+                        "Pseudo model fallback (known structure download failed)."
+                    )
+            else:
+                st.session_state["sequence_helper_pdb"] = build_pseudo_pdb_from_sequence(clean)
+                st.session_state["sequence_helper_source"] = "pseudo"
+                st.session_state["sequence_helper_source_note"] = (
+                    "Pseudo model (no curated known-structure match)."
+                )
             st.session_state["sequence_helper_ident"] = ident
-            st.session_state["sequence_helper_pdb"] = build_pseudo_pdb_from_sequence(clean)
     ident = st.session_state.get("sequence_helper_ident")
     helper_pdb = st.session_state.get("sequence_helper_pdb")
+    helper_source = st.session_state.get("sequence_helper_source", "pseudo")
+    helper_source_note = st.session_state.get("sequence_helper_source_note", "")
     if ident and isinstance(ident, dict):
         seq_col2.info(f"Sequence ID: **{ident.get('label','unknown')}** — {ident.get('detail','')}")
     if helper_pdb and isinstance(helper_pdb, str):
-        st.caption(
-            "Sequence helper uses a **pseudo-structure** for visualization only. "
-            "Different sequences often look like the same overall tube-like scaffold, "
-            "with changes mainly in length/coloring. For real fold differences, upload a real PDB."
-        )
+        if helper_source == "known_pdb":
+            st.success(helper_source_note or "Loaded curated known PDB for this sequence.")
+        else:
+            st.caption(
+                "Sequence helper is showing a **pseudo-structure** (fallback mode). "
+                "Different sequences can look like the same tube-like scaffold; "
+                "upload a real PDB for exact geometry."
+            )
+            if helper_source_note:
+                st.caption(helper_source_note)
         st.caption("Soft-motion background preview")
         render_structure_background_motion(helper_pdb, key_prefix="seq_helper_bg")
         with st.expander("Full interactive sequence model", expanded=True):

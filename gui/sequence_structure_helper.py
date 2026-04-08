@@ -9,7 +9,9 @@ This is intentionally a lightweight visual model generator for demos:
 from __future__ import annotations
 
 import math
+from functools import lru_cache
 from pathlib import Path
+import urllib.request
 
 
 AA1_TO_AA3 = {
@@ -34,6 +36,35 @@ AA1_TO_AA3 = {
     "W": "TRP",
     "Y": "TYR",
 }
+
+# Curated "common sequence -> known PDB" mappings for the GUI helper.
+# These are intended as high-confidence shortcuts for demo/common inputs.
+_KNOWN_SEQUENCE_STRUCTURES: tuple[dict[str, str], ...] = (
+    {
+        "label": "insulin_a_human",
+        "name": "Human insulin A-chain",
+        "sequence": "GIVEQCCTSICSLYQLENYCN",
+        "pdb_id": "4INS",
+        "chain": "A",
+    },
+    {
+        "label": "insulin_b_human",
+        "name": "Human insulin B-chain",
+        "sequence": "FVNQHLCGSHLVEALYLVCGERGFFYTPKT",
+        "pdb_id": "4INS",
+        "chain": "B",
+    },
+    {
+        "label": "lysozyme_c",
+        "name": "Lysozyme C (human, mature/pro-peptide region)",
+        "sequence": (
+            "KVFERCELARTLKRLGMDGYRGISLANWMCLAKWESGYNTRATNYNAGDRSTDYGIFQINSRYWCNDGKTP"
+            "GAVNACHLSCSALLQDNIADAVACAKRVVRDPQGIRAWVAWRNRCQNRDVRQYVQGCGV"
+        ),
+        "pdb_id": "1LZ1",
+        "chain": "A",
+    },
+)
 
 
 def sanitize_sequence(seq: str) -> str:
@@ -68,6 +99,119 @@ def identify_sequence(seq: str, *, petase_wt_fasta: Path) -> dict[str, str]:
         ident = 100.0 * same / max(len(wt), 1)
         return {"label": "petase_like", "detail": f"Length match to PETase WT; identity ~{ident:.1f}%."}
     return {"label": "custom_sequence", "detail": f"Custom sequence ({len(clean)} aa)."}
+
+
+def _sequence_identity(a: str, b: str) -> float:
+    if not a or not b or len(a) != len(b):
+        return 0.0
+    same = sum(1 for x, y in zip(a, b) if x == y)
+    return same / len(a)
+
+
+def find_known_structure_match(seq: str) -> dict[str, str] | None:
+    """
+    Return a curated known-structure match for common sequences, if available.
+
+    Match policy:
+    - exact full-sequence match, OR
+    - known sequence appears as a contiguous region (e.g., precursor includes mature chain), OR
+    - equal-length near-exact match (>=95% identity).
+    """
+    clean = sanitize_sequence(seq)
+    if not clean:
+        return None
+    for item in _KNOWN_SEQUENCE_STRUCTURES:
+        known_seq = item["sequence"]
+        if clean == known_seq:
+            return {
+                **item,
+                "match_type": "exact",
+                "match_detail": f"Exact sequence match to {item['name']}.",
+            }
+        if known_seq in clean:
+            return {
+                **item,
+                "match_type": "contains_known_region",
+                "match_detail": (
+                    f"Input contains known {item['name']} sequence region "
+                    f"({len(known_seq)} aa)."
+                ),
+            }
+        if len(clean) == len(known_seq):
+            ident = _sequence_identity(clean, known_seq)
+            if ident >= 0.95:
+                return {
+                    **item,
+                    "match_type": "high_identity",
+                    "match_detail": (
+                        f"High identity to {item['name']} "
+                        f"({ident * 100:.1f}% over {len(clean)} aa)."
+                    ),
+                }
+    return None
+
+
+@lru_cache(maxsize=32)
+def _download_text(url: str) -> str:
+    req = urllib.request.Request(
+        url,
+        headers={"User-Agent": "ProteinPredictor-GUI/1"},
+        method="GET",
+    )
+    with urllib.request.urlopen(req, timeout=25) as resp:
+        data = resp.read()
+    return data.decode("utf-8", errors="replace")
+
+
+def _extract_chain_pdb(pdb_text: str, chain_id: str) -> str:
+    """Keep only ATOM/HETATM records from one chain (plus terminal records)."""
+    ch = (chain_id or "").strip()[:1].upper()
+    if not ch:
+        return pdb_text
+    out: list[str] = []
+    for line in pdb_text.splitlines():
+        if line.startswith(("ATOM", "HETATM", "TER")):
+            record_chain = line[21:22].upper() if len(line) > 21 else ""
+            if line.startswith("TER") or record_chain == ch:
+                out.append(line)
+        elif line.startswith(("HEADER", "TITLE", "COMPND", "SOURCE", "REMARK", "MODEL", "ENDMDL", "END")):
+            out.append(line)
+    if not any(line.startswith("ATOM") for line in out):
+        return pdb_text
+    if not out or out[-1] != "END":
+        out.append("END")
+    return "\n".join(out) + "\n"
+
+
+def fetch_known_structure_pdb(match: dict[str, str]) -> tuple[str | None, str | None]:
+    """
+    Download known PDB for a curated match and optionally isolate the chain.
+
+    Returns ``(pdb_text, error_message)``.
+    """
+    pdb_id = match.get("pdb_id", "").strip().upper()
+    chain = match.get("chain", "").strip().upper()
+    if not pdb_id:
+        return None, "Missing PDB ID for known sequence match."
+    urls = (
+        f"https://files.rcsb.org/download/{pdb_id}.pdb",
+        f"http://files.rcsb.org/download/{pdb_id}.pdb",
+    )
+    errs: list[str] = []
+    pdb_text: str | None = None
+    for url in urls:
+        try:
+            pdb_text = _download_text(url)
+            break
+        except Exception as exc:  # noqa: BLE001
+            errs.append(f"{url} -> {type(exc).__name__}: {exc}")
+    if not pdb_text:
+        return None, "; ".join(errs[:2]) if errs else "Unknown fetch failure."
+    if "ATOM" not in pdb_text and "HETATM" not in pdb_text:
+        return None, f"Downloaded {pdb_id} but no ATOM/HETATM records found."
+    if chain:
+        pdb_text = _extract_chain_pdb(pdb_text, chain)
+    return pdb_text, None
 
 
 def _pdb_atom_line(

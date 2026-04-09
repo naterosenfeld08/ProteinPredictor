@@ -441,11 +441,12 @@ Run from the **repository root** (after `pip install -r requirements.txt`):
 streamlit run gui/app.py
 ```
 
-The local app opens with **three** primary workspaces:
+The local app opens with **two** primary tabs:
 
-1. **ΔΔG Prediction** — submit a sequence, choose a trained `.pkl`, and run inference; includes FireProt limitations context, z-score positioning, and uncertainty summary (same embedding path as `predict.py fasta`).
-2. **PETase Design Studio** — configure cycles / mutation count / output JSONL; optionally run **ColabFold** for structure-aware rescoring and optional ddG-guided hybrid reranking.
-3. **JSONL Run Browser** — load design logs and inspect sortable analytics tables.
+1. **Design + Prediction** — unified workflow with:
+   - **Single-sequence analysis** (`ΔΔG` + live structure companion)
+   - **PETase batch design** (policy-mixed generation, optional ColabFold/OpenMM stages, hybrid + Pareto ranking)
+2. **JSONL Run Browser** — load design logs and inspect sortable analytics tables.
 
 #### GUI visual language
 
@@ -489,7 +490,15 @@ In-silico loop for **theoretical IsPETase-like variants**: random mutations → 
 - **Efficiency mode (new):** `--structure-top-k K` with `--colabfold` does two-stage ranking: cheap sequence-only score for all proposals, then ColabFold only on top-`K` variants.
 - **Hybrid reranking (GUI worker path):** PETase runs can apply ddG-guided stage-2 reranking on a survivor subset with configurable budget, 70/20/10 survivor lanes (cheap/diversity/rescue), and uncertainty-adjusted hybrid scoring.
 - **SASA (P2):** `pip install -r petase_design/requirements-extras.txt` — when a ranked **PDB** exists, `physics_score` adds **FreeSASA** polar/apolar breakdown into the composite (`petase_design/sasa_utils.py`).
-- **Next hooks:** **OpenMM** minimization stub in `petase_design/openmm_energy.py`
+- **Novel-generation controls (GUI + worker):** random/adaptive/recombine policy mix, Pareto archive guidance, objective-term weighting, and optional OpenMM stage.
+- **OpenMM stage:** `petase_design/openmm_energy.py` now runs best-effort minimization/decomposition when enabled (`--openmm-stage` in worker/CLI paths).
+- **Smoke benchmark (multi-seed stability):**
+  ```bash
+  python scripts/petase_smoke_benchmark.py \
+    --ddg-model "training_output (CRITICAL DIRECTORY DO NOT TOUCH)/mlp_rf_ensemble_full_both/mlp_rf_ensemble.pkl" \
+    --cycles 50 \
+    --seeds 42,43,44
+  ```
 
 Scores are **proxies**, not measured Tm — validate top candidates experimentally.
 

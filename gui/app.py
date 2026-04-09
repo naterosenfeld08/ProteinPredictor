@@ -480,8 +480,19 @@ def _petase_results_dataframe(rows: list) -> pd.DataFrame:
     df = pd.json_normalize(rows)
     priority = [
         "generation",
+        "generator_policy",
+        "parent_ids",
+        "archive_member",
         "selected_by",
         "rescue_reason",
+        "pareto_rank",
+        "objective_scalar",
+        "objective_terms.ddg_effective",
+        "objective_terms.physics_composite_rank",
+        "objective_terms.structure_confidence",
+        "objective_terms.novelty_score",
+        "objective_terms.catalytic_safety_score",
+        "objective_terms.catalytic_safety_penalty",
         "hybrid_score",
         "cheap_score_norm",
         "ddg_pred",
@@ -493,6 +504,10 @@ def _petase_results_dataframe(rows: list) -> pd.DataFrame:
         "physics.sasa_total_area",
         "physics.apolar_sasa_fraction",
         "physics.radius_of_gyration",
+        "physics.structure_confidence",
+        "physics.structural_viability_penalty",
+        "physics.openmm_total_energy_kj_mol",
+        "physics.openmm_energy_per_residue_kj_mol",
         "physics.mutation_count",
         "physics.active_site_violation",
         "physics.mean_hydrophobicity",
@@ -529,17 +544,29 @@ def _render_run_report_cards(summary: dict) -> None:
     n_variants = int(counts.get("n_variants", 0) or 0)
     n_struct = int(counts.get("n_with_structure", 0) or 0)
     n_sasa = int(counts.get("n_with_sasa", 0) or 0)
+    n_pareto = int(counts.get("pareto_frontier_count", 0) or 0)
     struct_pct = (100.0 * n_struct / n_variants) if n_variants else 0.0
     sasa_pct = (100.0 * n_sasa / n_variants) if n_variants else 0.0
+    pareto_pct = (100.0 * n_pareto / n_variants) if n_variants else 0.0
     runtime_s = _safe_float(runtime.get("seconds_wall")) or 0.0
 
     st.markdown("#### Run Summary Cards")
-    c1, c2, c3, c4, c5 = st.columns(5)
+    c1, c2, c3, c4, c5, c6 = st.columns(6)
     c1.metric("Variants", n_variants)
     c2.metric("With structure", f"{n_struct} ({struct_pct:.1f}%)")
     c3.metric("With SASA", f"{n_sasa} ({sasa_pct:.1f}%)")
     c4.metric("Runtime (s)", f"{runtime_s:.3f}")
     c5.metric("Top-K mode", str(run_meta.get("structure_top_k") or "off"))
+    c6.metric("Pareto frontier", f"{n_pareto} ({pareto_pct:.1f}%)")
+
+    comp = summary.get("composition") or {}
+    if comp:
+        pcounts = comp.get("generator_policy_counts") or {}
+        scounts = comp.get("selected_by_counts") or {}
+        if pcounts:
+            st.caption(f"Generator policy mix: {pcounts}")
+        if scounts:
+            st.caption(f"Selection lane mix: {scounts}")
 
     top = summary.get("top_variants") or []
     if top:
@@ -608,7 +635,11 @@ def _render_phase2_analytics(rows: list[dict], *, key_prefix: str) -> None:
                 )
 
     numeric_cols = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])]
-    dist_candidates = [c for c in numeric_cols if c.startswith("physics.")]
+    dist_candidates = [
+        c
+        for c in numeric_cols
+        if c.startswith("physics.") or c.startswith("objective_") or c.startswith("objective_terms.")
+    ]
     if dist_candidates:
         pick = st.selectbox(
             "Distribution metric",
@@ -627,9 +658,13 @@ def _render_phase2_analytics(rows: list[dict], *, key_prefix: str) -> None:
             hist_df = pd.DataFrame({"bin": labels, "count": counts.to_numpy()}).set_index("bin")
             st.bar_chart(hist_df, height=220, width="stretch")
 
-    corr_cols = [c for c in numeric_cols if c.startswith("physics.")]
+    corr_cols = [
+        c
+        for c in numeric_cols
+        if c.startswith("physics.") or c.startswith("objective_") or c.startswith("objective_terms.")
+    ]
     if len(corr_cols) >= 2:
-        st.caption("Correlation matrix (physics features)")
+        st.caption("Correlation matrix (physics + objective features)")
         corr = df[corr_cols].corr(numeric_only=True).round(3)
         st.dataframe(corr, width="stretch", height=260)
 
@@ -696,6 +731,10 @@ def _render_variant_detail_drawer(rows: list[dict]) -> None:
     c2.metric("Mutation count", int(phys.get("mutation_count", 0) or 0))
     c3.metric("Selected for structure", "yes" if row.get("selected_for_structure") else "no")
     c4.metric("Has structure", "yes" if row.get("structure_pdb") else "no")
+    c5, c6, c7 = st.columns(3)
+    c5.metric("Pareto rank", int(row.get("pareto_rank", 0) or 0))
+    c6.metric("Objective scalar", f"{float(row.get('objective_scalar', 0.0)):.4f}")
+    c7.metric("Generator policy", str(row.get("generator_policy", "n/a")))
     st.caption(f"Mutations: {muts_txt}")
 
     structure_pdb = row.get("structure_pdb")
@@ -768,6 +807,31 @@ def tab_petase() -> None:
             value=False,
             help="Only enable if your ddG model was trained without composition features.",
         )
+        with st.expander("Advanced generation + objective controls", expanded=False):
+            st.caption("Tune policy mix, archive behavior, objective weighting, and OpenMM stage.")
+            p1, p2, p3 = st.columns(3)
+            with p1:
+                policy_random_frac = st.number_input("Policy random", min_value=0.0, max_value=1.0, value=0.50, step=0.05)
+            with p2:
+                policy_adaptive_frac = st.number_input("Policy adaptive", min_value=0.0, max_value=1.0, value=0.35, step=0.05)
+            with p3:
+                policy_recombine_frac = st.number_input("Policy recombine", min_value=0.0, max_value=1.0, value=0.15, step=0.05)
+            archive_size = st.number_input("Pareto archive size", min_value=4, max_value=5000, value=24, step=4)
+            no_pareto_archive = st.checkbox("Disable Pareto archive guidance", value=False)
+            use_openmm_stage = st.checkbox("Enable OpenMM stage (slow)", value=False)
+            openmm_platform = st.text_input("OpenMM platform", value="CPU")
+            st.markdown("Objective scalar weights")
+            o1, o2, o3, o4, o5 = st.columns(5)
+            with o1:
+                obj_w_ddg = st.number_input("w_ddg", min_value=0.0, max_value=1.0, value=0.35, step=0.05)
+            with o2:
+                obj_w_phys = st.number_input("w_phys", min_value=0.0, max_value=1.0, value=0.25, step=0.05)
+            with o3:
+                obj_w_struct = st.number_input("w_struct", min_value=0.0, max_value=1.0, value=0.15, step=0.05)
+            with o4:
+                obj_w_nov = st.number_input("w_novelty", min_value=0.0, max_value=1.0, value=0.15, step=0.05)
+            with o5:
+                obj_w_safe = st.number_input("w_safe", min_value=0.0, max_value=1.0, value=0.10, step=0.05)
 
         use_cf = st.checkbox("Run ColabFold for each variant (very slow)", value=False)
         use_topk = st.checkbox(
@@ -855,6 +919,20 @@ def tab_petase() -> None:
         cmd.extend(["--hybrid-cheap-weight", str(float(hybrid_cheap_weight))])
         cmd.extend(["--hybrid-ddg-weight", str(float(hybrid_ddg_weight))])
         cmd.extend(["--ddg-uncertainty-lambda", str(float(ddg_uncertainty_lambda))])
+        cmd.extend(["--policy-random-frac", str(float(policy_random_frac))])
+        cmd.extend(["--policy-adaptive-frac", str(float(policy_adaptive_frac))])
+        cmd.extend(["--policy-recombine-frac", str(float(policy_recombine_frac))])
+        cmd.extend(["--archive-size", str(int(archive_size))])
+        if no_pareto_archive:
+            cmd.append("--no-pareto-archive")
+        if use_openmm_stage:
+            cmd.append("--openmm-stage")
+            cmd.extend(["--openmm-platform", str(openmm_platform)])
+        cmd.extend(["--objective-ddg-weight", str(float(obj_w_ddg))])
+        cmd.extend(["--objective-physics-weight", str(float(obj_w_phys))])
+        cmd.extend(["--objective-structure-weight", str(float(obj_w_struct))])
+        cmd.extend(["--objective-novelty-weight", str(float(obj_w_nov))])
+        cmd.extend(["--objective-catalytic-safety-weight", str(float(obj_w_safe))])
         if ddg_no_comp:
             cmd.append("--ddg-no-composition")
 
@@ -983,9 +1061,15 @@ def tab_petase() -> None:
             st.markdown("#### Leaderboard")
             st.caption("Columns prioritize generation, structure, composite score, and SASA / Rg metrics.")
             st.dataframe(
-                disp.sort_values("hybrid_score", ascending=False).head(50)
-                if "hybrid_score" in disp.columns
-                else disp.sort_values("physics.composite", ascending=False).head(50),
+                (
+                    disp.sort_values(["pareto_rank", "objective_scalar"], ascending=[True, False]).head(50)
+                    if {"pareto_rank", "objective_scalar"}.issubset(set(disp.columns))
+                    else (
+                        disp.sort_values("hybrid_score", ascending=False).head(50)
+                        if "hybrid_score" in disp.columns
+                        else disp.sort_values("physics.composite", ascending=False).head(50)
+                    )
+                ),
                 width="stretch",
                 height=420,
             )

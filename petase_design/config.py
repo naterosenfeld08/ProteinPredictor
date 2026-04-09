@@ -27,4 +27,6 @@ WEIGHTS = {
     "active_site": 0.23,
     "compactness": 0.13,
     "sasa_burial": 0.14,
+    "structure_viability": 0.12,
+    "openmm_stability": 0.10,
 }

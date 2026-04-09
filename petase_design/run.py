@@ -71,6 +71,13 @@ def main() -> None:
         action="store_true",
         help="Pass --overwrite-existing-results to colabfold_batch (re-run even if outputs exist)",
     )
+    ap.add_argument("--policy-random-frac", type=float, default=0.50)
+    ap.add_argument("--policy-adaptive-frac", type=float, default=0.35)
+    ap.add_argument("--policy-recombine-frac", type=float, default=0.15)
+    ap.add_argument("--archive-size", type=int, default=24)
+    ap.add_argument("--no-pareto-archive", action="store_true")
+    ap.add_argument("--openmm-stage", action="store_true")
+    ap.add_argument("--openmm-platform", default="CPU")
     args = ap.parse_args()
 
     if not args.wt_fasta.is_file():
@@ -113,6 +120,13 @@ def main() -> None:
         structure_runner=runner,
         work_root=args.work_dir,
         structure_top_k=args.structure_top_k if args.colabfold else None,
+        policy_random_frac=float(args.policy_random_frac),
+        policy_adaptive_frac=float(args.policy_adaptive_frac),
+        policy_recombine_frac=float(args.policy_recombine_frac),
+        archive_size=max(4, int(args.archive_size)),
+        use_pareto_archive=not bool(args.no_pareto_archive),
+        use_openmm=bool(args.openmm_stage),
+        openmm_platform=str(args.openmm_platform),
     )
     print(f"Wrote {args.cycles} variants to {args.out}", flush=True)
     print(f"Run summary: {args.out.parent / 'run_summary.json'}", flush=True)

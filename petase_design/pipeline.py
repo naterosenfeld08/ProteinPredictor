@@ -1,7 +1,5 @@
 """
-PETase design **orchestration**: random mutations, optional two-stage ColabFold, JSONL logging.
-
-Calls :func:`petase_design.physics_score.score_sequence_physics` for each proposal.
+PETase design orchestration with optional policy mixing and Pareto archive guidance.
 """
 
 from __future__ import annotations
@@ -15,9 +13,14 @@ from typing import Any
 
 from petase_design import config
 from petase_design.run_summary import write_run_summary_json
-from petase_design.mutagenesis import propose_random_mutations, variant_from_mutations
+from petase_design.mutagenesis import (
+    propose_random_mutations,
+    propose_recombined_variant,
+    propose_weighted_mutations,
+    variant_from_mutations,
+)
 from petase_design.physics_score import score_sequence_physics
-from petase_design.sequence_utils import load_fasta_sequence
+from petase_design.sequence_utils import load_fasta_sequence, mutation_diff
 from petase_design.structure_runner import NullStructureRunner, StructureRunner
 
 
@@ -44,15 +47,15 @@ def run_design_cycles(
     structure_runner: StructureRunner | None = None,
     work_root: Path | None = None,
     structure_top_k: int | None = None,
+    policy_random_frac: float = 0.5,
+    policy_adaptive_frac: float = 0.35,
+    policy_recombine_frac: float = 0.15,
+    archive_size: int = 24,
+    use_pareto_archive: bool = True,
+    use_openmm: bool = False,
+    openmm_platform: str = "CPU",
 ) -> list[dict[str, Any]]:
-    """
-    Propose random variants and score with physics proxy.
-
-    Modes:
-      - Default: if structure_runner is ColabFold, each variant gets structure scoring.
-      - Two-stage: if structure_top_k is set (>0), do cheap sequence-only scoring first for
-        all variants, then run structure prediction only for the top-K by composite.
-    """
+    """Generate, score, and optionally structure-rerank PETase variants."""
     t_wall0 = time.time()
     rng = random.Random(seed)
     _, wt = load_fasta_sequence(wt_fasta)
@@ -64,29 +67,189 @@ def run_design_cycles(
     out_jsonl.parent.mkdir(parents=True, exist_ok=True)
     rows: list[dict[str, Any]] = []
 
-    # Stage 1: cheap sequence-only scoring for every proposal.
-    for t in range(n_cycles):
-        muts = propose_random_mutations(
-            wt, mutations_per_variant, rng=rng, protected_indices=protected
+    # Policy and archive state.
+    policy_random_frac = max(0.0, float(policy_random_frac))
+    policy_adaptive_frac = max(0.0, float(policy_adaptive_frac))
+    policy_recombine_frac = max(0.0, float(policy_recombine_frac))
+    total_mix = policy_random_frac + policy_adaptive_frac + policy_recombine_frac
+    if total_mix <= 0:
+        policy_random_frac, policy_adaptive_frac, policy_recombine_frac, total_mix = 1.0, 0.0, 0.0, 1.0
+    policy_random_frac /= total_mix
+    policy_adaptive_frac /= total_mix
+    policy_recombine_frac /= total_mix
+    position_weights = [1.0 for _ in wt]
+    archive_ids: list[str] = []
+    archive_sequences: dict[str, str] = {}
+    seen_sequences: set[str] = {wt}
+
+    def _safe_float(x: object, default: float = 0.0) -> float:
+        try:
+            if x is None:
+                return default
+            return float(x)
+        except (TypeError, ValueError):
+            return default
+
+    def _novelty(seq: str) -> float:
+        mut_frac = len(mutation_diff(wt, seq)) / max(len(wt), 1)
+        # Penalize repeated proposals; reward broader exploration.
+        duplicate_pen = 0.35 if seq in seen_sequences else 0.0
+        return max(0.0, min(1.0, mut_frac * 4.0 - duplicate_pen))
+
+    def _dominates(a: dict[str, float], b: dict[str, float]) -> bool:
+        # maximize composite + novelty; minimize active_site_violation
+        better_or_eq = (
+            a["composite"] >= b["composite"]
+            and a["novelty"] >= b["novelty"]
+            and a["active_site_violation"] <= b["active_site_violation"]
         )
-        var = variant_from_mutations(wt, muts)
+        strictly_better = (
+            a["composite"] > b["composite"]
+            or a["novelty"] > b["novelty"]
+            or a["active_site_violation"] < b["active_site_violation"]
+        )
+        return better_or_eq and strictly_better
+
+    def _compute_archive(current_rows: list[dict[str, Any]]) -> list[str]:
+        if not current_rows:
+            return []
+        if not use_pareto_archive:
+            ranked = sorted(
+                current_rows,
+                key=lambda r: _safe_float((r.get("physics") or {}).get("composite"), default=-1e9),
+                reverse=True,
+            )
+            return [str(r.get("job_id", "")) for r in ranked[: max(1, archive_size)] if r.get("job_id")]
+
+        feats: list[dict[str, float]] = []
+        for row in current_rows:
+            phys = row.get("physics") or {}
+            feats.append(
+                {
+                    "composite": _safe_float(phys.get("composite"), default=-1e9),
+                    "novelty": _safe_float(row.get("novelty_score"), default=0.0),
+                    "active_site_violation": _safe_float(phys.get("active_site_violation"), default=1e9),
+                }
+            )
+        dominated = [False] * len(current_rows)
+        for i in range(len(current_rows)):
+            if dominated[i]:
+                continue
+            for j in range(len(current_rows)):
+                if i == j:
+                    continue
+                if _dominates(feats[j], feats[i]):
+                    dominated[i] = True
+                    break
+        frontier = [idx for idx, is_dom in enumerate(dominated) if not is_dom]
+        frontier.sort(
+            key=lambda idx: (
+                feats[idx]["active_site_violation"],
+                -feats[idx]["composite"],
+                -feats[idx]["novelty"],
+            )
+        )
+        if len(frontier) > archive_size:
+            frontier = frontier[:archive_size]
+        return [
+            str(current_rows[idx].get("job_id", ""))
+            for idx in frontier
+            if current_rows[idx].get("job_id")
+        ]
+
+    def _sample_parent_sequence() -> tuple[str, str | None]:
+        if not archive_ids:
+            return wt, None
+        # Slightly biased toward top archive members while keeping exploration.
+        ranks = list(range(1, len(archive_ids) + 1))
+        weights = [1.0 / r for r in ranks]
+        pick = rng.choices(archive_ids, weights=weights, k=1)[0]
+        seq = archive_sequences.get(pick, wt)
+        return seq, pick
+
+    # Stage 1: cheap scoring with mixed generation policies.
+    for t in range(n_cycles):
+        roll = rng.random()
+        policy = "random"
+        parent_a_seq, parent_a_id = _sample_parent_sequence()
+        parent_b_seq, parent_b_id = wt, None
+        var = wt
+        muts: list[tuple[int, str]] = []
+
+        if (
+            roll >= policy_random_frac + policy_adaptive_frac
+            and len(archive_ids) >= 2
+        ):
+            policy = "recombine"
+            pick_a = rng.choice(archive_ids)
+            pick_b = rng.choice([x for x in archive_ids if x != pick_a])
+            parent_a_seq = archive_sequences.get(pick_a, wt)
+            parent_b_seq = archive_sequences.get(pick_b, wt)
+            parent_a_id, parent_b_id = pick_a, pick_b
+            var, _ = propose_recombined_variant(
+                wt,
+                parent_a_seq,
+                parent_b_seq,
+                int(mutations_per_variant),
+                rng=rng,
+                protected_indices=protected,
+            )
+            muts = [(i, aa_mut) for i, _aa_wt, aa_mut in mutation_diff(wt, var)]
+        elif roll >= policy_random_frac:
+            policy = "adaptive"
+            muts = propose_weighted_mutations(
+                parent_a_seq,
+                int(mutations_per_variant),
+                rng=rng,
+                protected_indices=protected,
+                position_weights=position_weights,
+            )
+            var = variant_from_mutations(parent_a_seq, muts)
+        else:
+            muts = propose_random_mutations(
+                parent_a_seq,
+                int(mutations_per_variant),
+                rng=rng,
+                protected_indices=protected,
+            )
+            var = variant_from_mutations(parent_a_seq, muts)
+
         bd = score_sequence_physics(
             wt,
             var,
             protected_indices=protected,
             structure_pdb=None,
             weights=dict(config.WEIGHTS),
+            use_openmm=False,
+            openmm_platform=openmm_platform,
         )
         row = {
             "generation": t,
             "job_id": f"gen{t:05d}",
+            "generator_policy": policy,
+            "parent_ids": [x for x in (parent_a_id, parent_b_id) if x],
             "mutations": [{"index": i, "to": aa} for i, aa in muts],
             "sequence": var,
             "physics": asdict(bd),
+            "novelty_score": _novelty(var),
             "structure_pdb": None,
             "selected_for_structure": False,
+            "archive_member": False,
         }
         rows.append(row)
+        seen_sequences.add(var)
+        archive_sequences[str(row["job_id"])] = var
+
+        # Adapt position priors from strong early winners.
+        comp = _safe_float((row.get("physics") or {}).get("composite"), default=0.0)
+        if comp > 0:
+            for i, _aa_wt, _aa_mut in mutation_diff(wt, var):
+                if 0 <= i < len(position_weights):
+                    position_weights[i] += 0.03 + min(comp, 2.0) * 0.02
+        if (t + 1) % 8 == 0:
+            archive_ids = _compute_archive(rows)
+            for r in rows:
+                r["archive_member"] = str(r.get("job_id")) in set(archive_ids)
 
     # Stage 2 (optional): structure only for top-K by cheap composite.
     use_two_stage = structure_top_k is not None and structure_top_k > 0
@@ -115,9 +278,15 @@ def run_design_cycles(
                 protected_indices=protected,
                 structure_pdb=pdb,
                 weights=dict(config.WEIGHTS),
+                use_openmm=use_openmm,
+                openmm_platform=openmm_platform,
             )
             row["physics"] = asdict(bd)
             row["structure_pdb"] = str(pdb) if pdb else None
+    archive_ids = _compute_archive(rows)
+    archive_set = set(archive_ids)
+    for r in rows:
+        r["archive_member"] = str(r.get("job_id", "")) in archive_set
 
     with out_jsonl.open("w", encoding="utf-8") as f:
         for row in rows:
@@ -130,6 +299,13 @@ def run_design_cycles(
         "mutations_per_variant": mutations_per_variant,
         "seed": seed,
         "structure_top_k": structure_top_k,
+            "policy_mix": {
+                "random": policy_random_frac,
+                "adaptive": policy_adaptive_frac,
+                "recombine": policy_recombine_frac,
+            },
+            "archive_size": int(archive_size),
+            "use_pareto_archive": bool(use_pareto_archive),
     }
     write_run_summary_json(
         out_jsonl,

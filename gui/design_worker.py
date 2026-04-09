@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import shlex
 import sys
 import tempfile
@@ -125,6 +126,60 @@ def _collect_ddg_survivors(
     return selected, selected_by, rescue_reason
 
 
+def _pareto_layers(
+    vectors: list[list[float]],
+    maximize: list[bool],
+) -> list[int]:
+    """Return Pareto rank layer per vector (0 = frontier)."""
+    n = len(vectors)
+    if n == 0:
+        return []
+
+    def dominates(i: int, j: int) -> bool:
+        a = vectors[i]
+        b = vectors[j]
+        ge_all = True
+        gt_any = False
+        for k, mx in enumerate(maximize):
+            va = a[k] if mx else -a[k]
+            vb = b[k] if mx else -b[k]
+            if va < vb:
+                ge_all = False
+                break
+            if va > vb:
+                gt_any = True
+        return ge_all and gt_any
+
+    dominates_set: list[set[int]] = [set() for _ in range(n)]
+    dominated_count = [0] * n
+    for i in range(n):
+        for j in range(n):
+            if i == j:
+                continue
+            if dominates(i, j):
+                dominates_set[i].add(j)
+            elif dominates(j, i):
+                dominated_count[i] += 1
+
+    layers = [-1] * n
+    frontier = [i for i in range(n) if dominated_count[i] == 0]
+    level = 0
+    while frontier:
+        next_frontier: list[int] = []
+        for i in frontier:
+            layers[i] = level
+            for j in dominates_set[i]:
+                dominated_count[j] -= 1
+                if dominated_count[j] == 0:
+                    next_frontier.append(j)
+        level += 1
+        frontier = next_frontier
+    for i in range(n):
+        if layers[i] < 0:
+            layers[i] = level
+    return layers
+
+
 def main() -> int:
     sys.path.insert(0, str(REPO_ROOT))
     from gui.worker_env import configure_worker_runtime_env
@@ -172,6 +227,18 @@ def main() -> int:
     ap.add_argument("--hybrid-cheap-weight", type=float, default=0.5)
     ap.add_argument("--hybrid-ddg-weight", type=float, default=0.5)
     ap.add_argument("--ddg-uncertainty-lambda", type=float, default=0.5)
+    ap.add_argument("--policy-random-frac", type=float, default=0.50)
+    ap.add_argument("--policy-adaptive-frac", type=float, default=0.35)
+    ap.add_argument("--policy-recombine-frac", type=float, default=0.15)
+    ap.add_argument("--archive-size", type=int, default=24)
+    ap.add_argument("--no-pareto-archive", action="store_true")
+    ap.add_argument("--openmm-stage", action="store_true")
+    ap.add_argument("--openmm-platform", default="CPU")
+    ap.add_argument("--objective-ddg-weight", type=float, default=0.35)
+    ap.add_argument("--objective-physics-weight", type=float, default=0.25)
+    ap.add_argument("--objective-structure-weight", type=float, default=0.15)
+    ap.add_argument("--objective-novelty-weight", type=float, default=0.15)
+    ap.add_argument("--objective-catalytic-safety-weight", type=float, default=0.10)
     args = ap.parse_args()
     if args.structure_top_k is not None and int(args.structure_top_k) <= 0:
         raise SystemExit("--structure-top-k must be a positive integer.")
@@ -214,6 +281,13 @@ def main() -> int:
             structure_runner=runner,
             work_root=args.work_root,
             structure_top_k=args.structure_top_k if args.colabfold else None,
+            policy_random_frac=float(args.policy_random_frac),
+            policy_adaptive_frac=float(args.policy_adaptive_frac),
+            policy_recombine_frac=float(args.policy_recombine_frac),
+            archive_size=max(4, int(args.archive_size)),
+            use_pareto_archive=not bool(args.no_pareto_archive),
+            use_openmm=bool(args.openmm_stage),
+            openmm_platform=str(args.openmm_platform),
         )
 
         # Initialize hybrid fields.
@@ -227,6 +301,14 @@ def main() -> int:
             row["hybrid_score"] = float(cheap_norm[i])
             row["selected_by"] = "cheap_only"
             row["rescue_reason"] = ""
+            row["objective_terms"] = {}
+            row["objective_scalar"] = float(cheap_norm[i])
+            row["pareto_rank"] = None
+            conf = _safe_float((row.get("physics") or {}).get("structure_confidence"), default=1.0)
+            row["structure_viable"] = bool(conf >= 0.15)
+            if row.get("selected_for_structure") and not row["structure_viable"]:
+                row["selected_by"] = "structure_failed"
+                row["rescue_reason"] = "low structure confidence"
 
         ddg_model = Path(args.ddg_model).expanduser() if args.ddg_model else None
         if ddg_model and ddg_model.is_file() and rows:
@@ -237,7 +319,11 @@ def main() -> int:
                 budget_count=budget,
                 seed=int(args.seed),
             )
-            survivors = [i for i in sorted(selected_idx) if str(rows[i].get("sequence", "")).strip()]
+            survivors = [
+                i
+                for i in sorted(selected_idx)
+                if str(rows[i].get("sequence", "")).strip() and bool(rows[i].get("structure_viable", True))
+            ]
 
             ddg_map: dict[str, tuple[float, float | None]] = {}
             if survivors:
@@ -307,28 +393,111 @@ def main() -> int:
                     row["selected_by"] = "not_in_ddg_budget"
                     row["rescue_reason"] = ""
 
-            rows = sorted(rows, key=lambda r: _safe_float(r.get("hybrid_score"), default=-1e9), reverse=True)
+        # Multi-objective schema + Pareto ranking (first-class) while preserving hybrid score.
+        ddg_eff_vals = [_safe_float(r.get("ddg_effective"), default=0.0) for r in rows]
+        phys_vals = [_safe_float((r.get("physics") or {}).get("composite"), default=-1e9) for r in rows]
+        struct_vals = [_safe_float((r.get("physics") or {}).get("structure_confidence"), default=0.0) for r in rows]
+        nov_vals = [_safe_float(r.get("novelty_score"), default=0.0) for r in rows]
+        cat_pen = [
+            _safe_float((r.get("physics") or {}).get("active_site_violation"), default=1e9)
+            for r in rows
+        ]
+        phys_rank = _percentile_ranks(phys_vals, higher_is_better=True)
+        cat_safety = [1.0 / (1.0 + max(0.0, p)) for p in cat_pen]
 
-            # Keep JSONL and summary aligned with enriched rows.
-            with args.out_jsonl.open("w", encoding="utf-8") as f:
-                for row in rows:
-                    f.write(json.dumps(row) + "\n")
-            write_run_summary_json(
-                args.out_jsonl,
-                rows,
-                t0=t0,
-                t1=time.time(),
-                meta={
-                    "wt_fasta": str(args.wt_fasta),
-                    "n_cycles": int(args.cycles),
-                    "mutations_per_variant": int(args.mutations_per_variant),
-                    "seed": int(args.seed),
-                    "structure_top_k": args.structure_top_k if args.colabfold else None,
-                    "hybrid_rerank": True,
-                    "ddg_model": str(ddg_model),
-                    "ddg_survivor_pct": float(args.ddg_survivor_pct),
-                },
+        ow_ddg = max(0.0, float(args.objective_ddg_weight))
+        ow_phys = max(0.0, float(args.objective_physics_weight))
+        ow_struct = max(0.0, float(args.objective_structure_weight))
+        ow_nov = max(0.0, float(args.objective_novelty_weight))
+        ow_safe = max(0.0, float(args.objective_catalytic_safety_weight))
+        o_sum = ow_ddg + ow_phys + ow_struct + ow_nov + ow_safe
+        if o_sum <= 0:
+            ow_ddg = ow_phys = ow_struct = ow_nov = ow_safe = 0.2
+            o_sum = 1.0
+        ow_ddg /= o_sum
+        ow_phys /= o_sum
+        ow_struct /= o_sum
+        ow_nov /= o_sum
+        ow_safe /= o_sum
+
+        vectors: list[list[float]] = []
+        for i, row in enumerate(rows):
+            terms = {
+                "ddg_effective": float(max(0.0, min(1.0, ddg_eff_vals[i]))),
+                "physics_composite_rank": float(max(0.0, min(1.0, phys_rank[i]))),
+                "structure_confidence": float(max(0.0, min(1.0, struct_vals[i]))),
+                "novelty_score": float(max(0.0, min(1.0, nov_vals[i]))),
+                "catalytic_safety_score": float(max(0.0, min(1.0, cat_safety[i]))),
+                "catalytic_safety_penalty": float(max(0.0, cat_pen[i])) if math.isfinite(cat_pen[i]) else 1e9,
+            }
+            scalar = (
+                ow_ddg * terms["ddg_effective"]
+                + ow_phys * terms["physics_composite_rank"]
+                + ow_struct * terms["structure_confidence"]
+                + ow_nov * terms["novelty_score"]
+                + ow_safe * terms["catalytic_safety_score"]
             )
+            row["objective_terms"] = terms
+            row["objective_scalar"] = float(scalar)
+            vectors.append(
+                [
+                    terms["ddg_effective"],
+                    terms["physics_composite_rank"],
+                    terms["structure_confidence"],
+                    terms["novelty_score"],
+                    terms["catalytic_safety_score"],
+                ]
+            )
+
+        ranks = _pareto_layers(vectors, maximize=[True, True, True, True, True])
+        for i, row in enumerate(rows):
+            row["pareto_rank"] = int(ranks[i])
+
+        rows = sorted(
+            rows,
+            key=lambda r: (
+                int(r.get("pareto_rank") if r.get("pareto_rank") is not None else 9999),
+                -_safe_float(r.get("objective_scalar"), default=-1e9),
+                -_safe_float(r.get("hybrid_score"), default=-1e9),
+            ),
+        )
+
+        # Keep JSONL and summary aligned with enriched rows.
+        with args.out_jsonl.open("w", encoding="utf-8") as f:
+            for row in rows:
+                f.write(json.dumps(row) + "\n")
+        write_run_summary_json(
+            args.out_jsonl,
+            rows,
+            t0=t0,
+            t1=time.time(),
+            meta={
+                "wt_fasta": str(args.wt_fasta),
+                "n_cycles": int(args.cycles),
+                "mutations_per_variant": int(args.mutations_per_variant),
+                "seed": int(args.seed),
+                "structure_top_k": args.structure_top_k if args.colabfold else None,
+                "hybrid_rerank": True,
+                "ddg_model": str(ddg_model),
+                "ddg_survivor_pct": float(args.ddg_survivor_pct),
+                "policy_mix": {
+                    "random": float(args.policy_random_frac),
+                    "adaptive": float(args.policy_adaptive_frac),
+                    "recombine": float(args.policy_recombine_frac),
+                },
+                "archive_size": int(args.archive_size),
+                "use_pareto_archive": not bool(args.no_pareto_archive),
+                "objective_weights": {
+                    "ddg_effective": ow_ddg,
+                    "physics_composite_rank": ow_phys,
+                    "structure_confidence": ow_struct,
+                    "novelty_score": ow_nov,
+                    "catalytic_safety_score": ow_safe,
+                },
+                "openmm_stage": bool(args.openmm_stage),
+                "openmm_platform": str(args.openmm_platform),
+            },
+        )
 
         out_result.write_text(json.dumps(rows, default=str), encoding="utf-8")
         return 0

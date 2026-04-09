@@ -51,6 +51,16 @@ def build_run_summary(
         phys = row.get("physics") or {}
         if phys.get("sasa_total_area") is not None:
             n_with_sasa += 1
+    policy_counts: dict[str, int] = {}
+    selected_by_counts: dict[str, int] = {}
+    pareto_frontier_count = 0
+    for row in rows:
+        pol = str(row.get("generator_policy", "unknown"))
+        policy_counts[pol] = policy_counts.get(pol, 0) + 1
+        sel = str(row.get("selected_by", "unknown"))
+        selected_by_counts[sel] = selected_by_counts.get(sel, 0) + 1
+        if int(row.get("pareto_rank") or 999999) == 0:
+            pareto_frontier_count += 1
 
     ranked = sorted(
         rows,
@@ -88,6 +98,11 @@ def build_run_summary(
             "n_variants": n_variants,
             "n_with_structure": n_with_structure,
             "n_with_sasa": n_with_sasa,
+            "pareto_frontier_count": pareto_frontier_count,
+        },
+        "composition": {
+            "generator_policy_counts": policy_counts,
+            "selected_by_counts": selected_by_counts,
         },
         "runtime": {
             "seconds_wall": round(wall_seconds, 3),
@@ -96,6 +111,28 @@ def build_run_summary(
         },
         "top_variants": top,
     }
+    # Objective drift summary by generation (if objective_scalar exists).
+    by_gen: dict[int, list[float]] = {}
+    for row in rows:
+        if row.get("generation") is None:
+            continue
+        g = int(row["generation"])
+        score = row.get("objective_scalar")
+        if score is None:
+            continue
+        by_gen.setdefault(g, []).append(float(score))
+    if by_gen:
+        drift: list[dict[str, Any]] = []
+        for g in sorted(by_gen):
+            vals = by_gen[g]
+            drift.append(
+                {
+                    "generation": g,
+                    "objective_mean": float(sum(vals) / max(len(vals), 1)),
+                    "objective_best": float(max(vals)),
+                }
+            )
+        out["objective_drift"] = drift
     if meta:
         out["run"] = meta
     return out

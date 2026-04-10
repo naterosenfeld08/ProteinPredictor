@@ -239,9 +239,34 @@ def main() -> int:
     ap.add_argument("--objective-structure-weight", type=float, default=0.15)
     ap.add_argument("--objective-novelty-weight", type=float, default=0.15)
     ap.add_argument("--objective-catalytic-safety-weight", type=float, default=0.10)
+    ap.add_argument(
+        "--protected-indices-json",
+        default="",
+        help="Optional JSON list of 0-based protected residue indices.",
+    )
+    ap.add_argument(
+        "--region-budgets-json",
+        default="",
+        help="Optional JSON list of [start,end,max_mut] mutation budget triplets.",
+    )
     args = ap.parse_args()
     if args.structure_top_k is not None and int(args.structure_top_k) <= 0:
         raise SystemExit("--structure-top-k must be a positive integer.")
+    if float(args.policy_random_frac) + float(args.policy_adaptive_frac) + float(args.policy_recombine_frac) <= 0:
+        raise SystemExit("Policy mix sum must be > 0.")
+    if float(args.hybrid_cheap_weight) + float(args.hybrid_ddg_weight) <= 0:
+        raise SystemExit("Hybrid cheap/ddG weights must sum to > 0.")
+    if (
+        float(args.objective_ddg_weight)
+        + float(args.objective_physics_weight)
+        + float(args.objective_structure_weight)
+        + float(args.objective_novelty_weight)
+        + float(args.objective_catalytic_safety_weight)
+        <= 0
+    ):
+        raise SystemExit("Objective weight sum must be > 0.")
+    if not (0.0 < float(args.ddg_survivor_pct) <= 1.0):
+        raise SystemExit("--ddg-survivor-pct must be within (0, 1].")
 
     # PETase loop is mostly pure Python; env still helps if optional deps spawn threads.
     configure_worker_runtime_env()
@@ -272,6 +297,24 @@ def main() -> int:
         args.out_jsonl.parent.mkdir(parents=True, exist_ok=True)
         args.work_root.mkdir(parents=True, exist_ok=True)
 
+        protected_indices_override: list[int] | None = None
+        if str(args.protected_indices_json).strip():
+            payload = json.loads(str(args.protected_indices_json))
+            if not isinstance(payload, list):
+                raise ValueError("--protected-indices-json must be a JSON list.")
+            protected_indices_override = sorted({int(x) for x in payload})
+
+        region_mutation_budgets: list[tuple[int, int, int]] = []
+        if str(args.region_budgets_json).strip():
+            payload = json.loads(str(args.region_budgets_json))
+            if not isinstance(payload, list):
+                raise ValueError("--region-budgets-json must be a JSON list.")
+            for item in payload:
+                if not isinstance(item, list) or len(item) != 3:
+                    raise ValueError("Each region budget must be [start,end,max_mut].")
+                s, e, m = int(item[0]), int(item[1]), int(item[2])
+                region_mutation_budgets.append((s, e, m))
+
         rows = run_design_cycles(
             wt_fasta=args.wt_fasta,
             n_cycles=int(args.cycles),
@@ -288,6 +331,8 @@ def main() -> int:
             use_pareto_archive=not bool(args.no_pareto_archive),
             use_openmm=bool(args.openmm_stage),
             openmm_platform=str(args.openmm_platform),
+            protected_indices_override=protected_indices_override,
+            region_mutation_budgets=region_mutation_budgets,
         )
 
         # Initialize hybrid fields.
@@ -496,6 +541,11 @@ def main() -> int:
                 },
                 "openmm_stage": bool(args.openmm_stage),
                 "openmm_platform": str(args.openmm_platform),
+                "protected_indices_count": len(protected_indices_override or []),
+                "region_mutation_budgets": [
+                    {"start": int(s), "end": int(e), "max_mut": int(m)}
+                    for s, e, m in region_mutation_budgets
+                ],
             },
         )
 

@@ -54,12 +54,18 @@ def run_design_cycles(
     use_pareto_archive: bool = True,
     use_openmm: bool = False,
     openmm_platform: str = "CPU",
+    protected_indices_override: list[int] | None = None,
+    region_mutation_budgets: list[tuple[int, int, int]] | None = None,
 ) -> list[dict[str, Any]]:
     """Generate, score, and optionally structure-rerank PETase variants."""
     t_wall0 = time.time()
     rng = random.Random(seed)
     _, wt = load_fasta_sequence(wt_fasta)
-    protected = load_protected_indices()
+    protected = (
+        sorted({int(i) for i in (protected_indices_override or [])})
+        if protected_indices_override is not None
+        else load_protected_indices()
+    )
     runner = structure_runner or NullStructureRunner()
     work_root = work_root or Path("petase_design_runs") / "structures"
     work_root.mkdir(parents=True, exist_ok=True)
@@ -81,6 +87,7 @@ def run_design_cycles(
     archive_ids: list[str] = []
     archive_sequences: dict[str, str] = {}
     seen_sequences: set[str] = {wt}
+    region_mutation_budgets = list(region_mutation_budgets or [])
 
     def _safe_float(x: object, default: float = 0.0) -> float:
         try:
@@ -167,6 +174,24 @@ def run_design_cycles(
         seq = archive_sequences.get(pick, wt)
         return seq, pick
 
+    def _enforce_region_budgets(seq: str) -> tuple[str, int]:
+        if not region_mutation_budgets:
+            return seq, 0
+        arr = list(seq)
+        reverted = 0
+        for start, end, max_mut in region_mutation_budgets:
+            s = max(0, min(int(start), len(wt) - 1))
+            e = max(s, min(int(end), len(wt) - 1))
+            m = max(0, int(max_mut))
+            changed = [i for i in range(s, e + 1) if arr[i] != wt[i]]
+            if len(changed) <= m:
+                continue
+            rng.shuffle(changed)
+            for i in changed[m:]:
+                arr[i] = wt[i]
+                reverted += 1
+        return "".join(arr), reverted
+
     # Stage 1: cheap scoring with mixed generation policies.
     for t in range(n_cycles):
         roll = rng.random()
@@ -214,6 +239,10 @@ def run_design_cycles(
             )
             var = variant_from_mutations(parent_a_seq, muts)
 
+        var, reverted_by_budget = _enforce_region_budgets(var)
+        if reverted_by_budget > 0:
+            muts = [(i, aa_mut) for i, _aa_wt, aa_mut in mutation_diff(wt, var)]
+
         bd = score_sequence_physics(
             wt,
             var,
@@ -235,6 +264,7 @@ def run_design_cycles(
             "structure_pdb": None,
             "selected_for_structure": False,
             "archive_member": False,
+            "constraint_reverts": int(reverted_by_budget),
         }
         rows.append(row)
         seen_sequences.add(var)
@@ -306,6 +336,11 @@ def run_design_cycles(
             },
             "archive_size": int(archive_size),
             "use_pareto_archive": bool(use_pareto_archive),
+            "protected_indices_count": len(protected),
+            "region_mutation_budgets": [
+                {"start": int(s), "end": int(e), "max_mut": int(m)}
+                for s, e, m in region_mutation_budgets
+            ],
     }
     write_run_summary_json(
         out_jsonl,

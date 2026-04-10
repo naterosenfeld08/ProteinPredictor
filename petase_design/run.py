@@ -8,6 +8,7 @@ CLI entry: PETase design loop (physics proxy, optional structure hook).
 from __future__ import annotations
 
 import argparse
+import json
 import shlex
 from pathlib import Path
 
@@ -78,12 +79,29 @@ def main() -> None:
     ap.add_argument("--no-pareto-archive", action="store_true")
     ap.add_argument("--openmm-stage", action="store_true")
     ap.add_argument("--openmm-platform", default="CPU")
+    ap.add_argument("--protected-indices-json", default="")
+    ap.add_argument("--region-budgets-json", default="")
     args = ap.parse_args()
 
     if not args.wt_fasta.is_file():
         raise SystemExit(f"WT FASTA not found: {args.wt_fasta}")
     if args.structure_top_k is not None and args.structure_top_k <= 0:
         raise SystemExit("--structure-top-k must be a positive integer.")
+    protected_indices_override: list[int] | None = None
+    if str(args.protected_indices_json).strip():
+        payload = json.loads(str(args.protected_indices_json))
+        if not isinstance(payload, list):
+            raise SystemExit("--protected-indices-json must be a JSON list.")
+        protected_indices_override = sorted({int(x) for x in payload})
+    region_mutation_budgets: list[tuple[int, int, int]] = []
+    if str(args.region_budgets_json).strip():
+        payload = json.loads(str(args.region_budgets_json))
+        if not isinstance(payload, list):
+            raise SystemExit("--region-budgets-json must be a JSON list.")
+        for item in payload:
+            if not isinstance(item, list) or len(item) != 3:
+                raise SystemExit("Each region budget must be [start,end,max_mut].")
+            region_mutation_budgets.append((int(item[0]), int(item[1]), int(item[2])))
 
     runner = None
     if args.colabfold:
@@ -127,6 +145,8 @@ def main() -> None:
         use_pareto_archive=not bool(args.no_pareto_archive),
         use_openmm=bool(args.openmm_stage),
         openmm_platform=str(args.openmm_platform),
+        protected_indices_override=protected_indices_override,
+        region_mutation_budgets=region_mutation_budgets,
     )
     print(f"Wrote {args.cycles} variants to {args.out}", flush=True)
     print(f"Run summary: {args.out.parent / 'run_summary.json'}", flush=True)

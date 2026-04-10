@@ -527,6 +527,97 @@ def _safe_float(x: object) -> float | None:
         return None
 
 
+def _parse_index_tokens(raw: str) -> list[int]:
+    """
+    Parse tokens like: 10,12,20-25 into sorted unique indices.
+    """
+    text = str(raw or "").strip()
+    if not text:
+        return []
+    out: set[int] = set()
+    for tok in text.replace("\n", ",").split(","):
+        tok = tok.strip()
+        if not tok:
+            continue
+        if "-" in tok:
+            a_s, b_s = tok.split("-", 1)
+            a = int(a_s.strip())
+            b = int(b_s.strip())
+            if b < a:
+                a, b = b, a
+            for i in range(a, b + 1):
+                out.add(int(i))
+        else:
+            out.add(int(tok))
+    return sorted(out)
+
+
+def _parse_region_budgets(raw: str) -> list[tuple[int, int, int]]:
+    """
+    Parse lines in format: start-end:max_mut
+    Example:
+      0-35:1
+      36-100:2
+    """
+    text = str(raw or "").strip()
+    if not text:
+        return []
+    out: list[tuple[int, int, int]] = []
+    for line in text.splitlines():
+        ln = line.strip()
+        if not ln:
+            continue
+        if ":" not in ln or "-" not in ln:
+            raise ValueError(f"Invalid region budget line: {ln!r}")
+        left, right = ln.split(":", 1)
+        a_s, b_s = left.split("-", 1)
+        a = int(a_s.strip())
+        b = int(b_s.strip())
+        m = int(right.strip())
+        if b < a:
+            a, b = b, a
+        if m < 0:
+            raise ValueError(f"max_mut must be >= 0: {ln!r}")
+        out.append((a, b, m))
+    return out
+
+
+def _profile_defaults(profile: str) -> dict[str, float]:
+    presets: dict[str, dict[str, float]] = {
+        "explore": {
+            "policy_random_frac": 0.55,
+            "policy_adaptive_frac": 0.25,
+            "policy_recombine_frac": 0.20,
+            "obj_w_ddg": 0.25,
+            "obj_w_phys": 0.20,
+            "obj_w_struct": 0.15,
+            "obj_w_nov": 0.30,
+            "obj_w_safe": 0.10,
+        },
+        "balanced": {
+            "policy_random_frac": 0.50,
+            "policy_adaptive_frac": 0.35,
+            "policy_recombine_frac": 0.15,
+            "obj_w_ddg": 0.35,
+            "obj_w_phys": 0.25,
+            "obj_w_struct": 0.15,
+            "obj_w_nov": 0.15,
+            "obj_w_safe": 0.10,
+        },
+        "exploit": {
+            "policy_random_frac": 0.30,
+            "policy_adaptive_frac": 0.45,
+            "policy_recombine_frac": 0.25,
+            "obj_w_ddg": 0.45,
+            "obj_w_phys": 0.25,
+            "obj_w_struct": 0.15,
+            "obj_w_nov": 0.05,
+            "obj_w_safe": 0.10,
+        },
+    }
+    return presets.get(profile, presets["balanced"])
+
+
 def _load_run_summary_for_jsonl(out_jsonl: Path) -> dict | None:
     summary_path = out_jsonl.parent / "run_summary.json"
     if not summary_path.is_file():
@@ -736,6 +827,25 @@ def _render_variant_detail_drawer(rows: list[dict]) -> None:
     c6.metric("Objective scalar", f"{float(row.get('objective_scalar', 0.0)):.4f}")
     c7.metric("Generator policy", str(row.get("generator_policy", "n/a")))
     st.caption(f"Mutations: {muts_txt}")
+    terms = row.get("objective_terms") or {}
+    if isinstance(terms, dict) and terms:
+        st.markdown("**Promotion / demotion explanation**")
+        tcols = st.columns(5)
+        tcols[0].metric("ddG effective", f"{float(terms.get('ddg_effective', 0.0)):.3f}")
+        tcols[1].metric("Physics rank", f"{float(terms.get('physics_composite_rank', 0.0)):.3f}")
+        tcols[2].metric("Structure conf", f"{float(terms.get('structure_confidence', 0.0)):.3f}")
+        tcols[3].metric("Novelty", f"{float(terms.get('novelty_score', 0.0)):.3f}")
+        tcols[4].metric("Catalytic safety", f"{float(terms.get('catalytic_safety_score', 0.0)):.3f}")
+        notes: list[str] = []
+        if float(terms.get("catalytic_safety_penalty", 0.0)) > 1.0:
+            notes.append("High catalytic safety penalty depressed objective score.")
+        if float(terms.get("novelty_score", 0.0)) < 0.1:
+            notes.append("Low novelty indicates conservative design neighborhood.")
+        if float(row.get("structure_viable", 1.0)) == 0.0:
+            notes.append("Failed structure viability gate and was excluded from ddG stage.")
+        if not notes:
+            notes.append("No major penalties detected; rank mainly driven by objective weights.")
+        st.caption(" ".join(notes))
 
     structure_pdb = row.get("structure_pdb")
     if structure_pdb:
@@ -807,15 +917,46 @@ def tab_petase() -> None:
             value=False,
             help="Only enable if your ddG model was trained without composition features.",
         )
+        profile = st.selectbox(
+            "Search profile",
+            options=["balanced", "explore", "exploit", "custom"],
+            index=0,
+            help="Prefills policy/objective defaults; custom leaves values as-is.",
+        )
+        if profile != "custom":
+            defaults = _profile_defaults(profile)
+            for k, v in defaults.items():
+                st.session_state[f"petase_{k}"] = float(v)
         with st.expander("Advanced generation + objective controls", expanded=False):
             st.caption("Tune policy mix, archive behavior, objective weighting, and OpenMM stage.")
             p1, p2, p3 = st.columns(3)
             with p1:
-                policy_random_frac = st.number_input("Policy random", min_value=0.0, max_value=1.0, value=0.50, step=0.05)
+                policy_random_frac = st.number_input(
+                    "Policy random",
+                    min_value=0.0,
+                    max_value=1.0,
+                    value=float(st.session_state.get("petase_policy_random_frac", 0.50)),
+                    step=0.05,
+                    key="petase_policy_random_frac",
+                )
             with p2:
-                policy_adaptive_frac = st.number_input("Policy adaptive", min_value=0.0, max_value=1.0, value=0.35, step=0.05)
+                policy_adaptive_frac = st.number_input(
+                    "Policy adaptive",
+                    min_value=0.0,
+                    max_value=1.0,
+                    value=float(st.session_state.get("petase_policy_adaptive_frac", 0.35)),
+                    step=0.05,
+                    key="petase_policy_adaptive_frac",
+                )
             with p3:
-                policy_recombine_frac = st.number_input("Policy recombine", min_value=0.0, max_value=1.0, value=0.15, step=0.05)
+                policy_recombine_frac = st.number_input(
+                    "Policy recombine",
+                    min_value=0.0,
+                    max_value=1.0,
+                    value=float(st.session_state.get("petase_policy_recombine_frac", 0.15)),
+                    step=0.05,
+                    key="petase_policy_recombine_frac",
+                )
             archive_size = st.number_input("Pareto archive size", min_value=4, max_value=5000, value=24, step=4)
             no_pareto_archive = st.checkbox("Disable Pareto archive guidance", value=False)
             use_openmm_stage = st.checkbox("Enable OpenMM stage (slow)", value=False)
@@ -823,15 +964,77 @@ def tab_petase() -> None:
             st.markdown("Objective scalar weights")
             o1, o2, o3, o4, o5 = st.columns(5)
             with o1:
-                obj_w_ddg = st.number_input("w_ddg", min_value=0.0, max_value=1.0, value=0.35, step=0.05)
+                obj_w_ddg = st.number_input(
+                    "w_ddg",
+                    min_value=0.0,
+                    max_value=1.0,
+                    value=float(st.session_state.get("petase_obj_w_ddg", 0.35)),
+                    step=0.05,
+                    key="petase_obj_w_ddg",
+                )
             with o2:
-                obj_w_phys = st.number_input("w_phys", min_value=0.0, max_value=1.0, value=0.25, step=0.05)
+                obj_w_phys = st.number_input(
+                    "w_phys",
+                    min_value=0.0,
+                    max_value=1.0,
+                    value=float(st.session_state.get("petase_obj_w_phys", 0.25)),
+                    step=0.05,
+                    key="petase_obj_w_phys",
+                )
             with o3:
-                obj_w_struct = st.number_input("w_struct", min_value=0.0, max_value=1.0, value=0.15, step=0.05)
+                obj_w_struct = st.number_input(
+                    "w_struct",
+                    min_value=0.0,
+                    max_value=1.0,
+                    value=float(st.session_state.get("petase_obj_w_struct", 0.15)),
+                    step=0.05,
+                    key="petase_obj_w_struct",
+                )
             with o4:
-                obj_w_nov = st.number_input("w_novelty", min_value=0.0, max_value=1.0, value=0.15, step=0.05)
+                obj_w_nov = st.number_input(
+                    "w_novelty",
+                    min_value=0.0,
+                    max_value=1.0,
+                    value=float(st.session_state.get("petase_obj_w_nov", 0.15)),
+                    step=0.05,
+                    key="petase_obj_w_nov",
+                )
             with o5:
-                obj_w_safe = st.number_input("w_safe", min_value=0.0, max_value=1.0, value=0.10, step=0.05)
+                obj_w_safe = st.number_input(
+                    "w_safe",
+                    min_value=0.0,
+                    max_value=1.0,
+                    value=float(st.session_state.get("petase_obj_w_safe", 0.10)),
+                    step=0.05,
+                    key="petase_obj_w_safe",
+                )
+            pol_sum = float(policy_random_frac + policy_adaptive_frac + policy_recombine_frac)
+            obj_sum = float(obj_w_ddg + obj_w_phys + obj_w_struct + obj_w_nov + obj_w_safe)
+            if pol_sum > 0:
+                st.caption(
+                    f"Policy mix (normalized): random {policy_random_frac/pol_sum:.2f}, "
+                    f"adaptive {policy_adaptive_frac/pol_sum:.2f}, recombine {policy_recombine_frac/pol_sum:.2f}"
+                )
+            else:
+                st.warning("Policy mix sum is 0; run is invalid until at least one policy > 0.")
+            if obj_sum > 0:
+                st.caption(
+                    f"Objective mix (normalized): ddG {obj_w_ddg/obj_sum:.2f}, physics {obj_w_phys/obj_sum:.2f}, "
+                    f"struct {obj_w_struct/obj_sum:.2f}, novelty {obj_w_nov/obj_sum:.2f}, safety {obj_w_safe/obj_sum:.2f}"
+                )
+            else:
+                st.warning("Objective weights sum is 0; run is invalid until at least one objective > 0.")
+            st.markdown("Constraint editor")
+            protected_idx_text = st.text_area(
+                "Protected residue indices (0-based; comma or ranges, e.g. 10,12,40-45)",
+                value="",
+                height=70,
+            )
+            region_budget_text = st.text_area(
+                "Region mutation budgets (one per line: start-end:max_mut)",
+                value="",
+                height=90,
+            )
 
         use_cf = st.checkbox("Run ColabFold for each variant (very slow)", value=False)
         use_topk = st.checkbox(
@@ -869,6 +1072,37 @@ def tab_petase() -> None:
         if not ddg_model_p.is_file():
             st.error(f"ddG model not found: {ddg_model_p}")
             return
+        policy_sum = float(policy_random_frac + policy_adaptive_frac + policy_recombine_frac)
+        if policy_sum <= 0:
+            st.error("Policy mix must have a positive sum.")
+            return
+        objective_sum = float(obj_w_ddg + obj_w_phys + obj_w_struct + obj_w_nov + obj_w_safe)
+        if objective_sum <= 0:
+            st.error("Objective weights must have a positive sum.")
+            return
+        hybrid_sum = float(hybrid_cheap_weight + hybrid_ddg_weight)
+        if hybrid_sum <= 0:
+            st.error("Hybrid cheap/ddG weights must have a positive sum.")
+            return
+        if use_openmm_stage and not use_cf:
+            st.warning("OpenMM stage requires structures; enable ColabFold to populate structure PDBs.")
+        try:
+            protected_indices = _parse_index_tokens(protected_idx_text)
+            region_budgets = _parse_region_budgets(region_budget_text)
+        except ValueError as e:
+            st.error(f"Constraint parsing failed: {e}")
+            return
+        if protected_indices and any(i < 0 for i in protected_indices):
+            st.error("Protected indices must be >= 0.")
+            return
+        if region_budgets:
+            for s, e, m in region_budgets:
+                if s < 0 or e < 0:
+                    st.error("Region budget indices must be >= 0.")
+                    return
+                if m < 0:
+                    st.error("Region budget max_mut must be >= 0.")
+                    return
 
         out_p = Path(out_path)
         out_p.parent.mkdir(parents=True, exist_ok=True)
@@ -933,6 +1167,10 @@ def tab_petase() -> None:
         cmd.extend(["--objective-structure-weight", str(float(obj_w_struct))])
         cmd.extend(["--objective-novelty-weight", str(float(obj_w_nov))])
         cmd.extend(["--objective-catalytic-safety-weight", str(float(obj_w_safe))])
+        if protected_indices:
+            cmd.extend(["--protected-indices-json", json.dumps(protected_indices)])
+        if region_budgets:
+            cmd.extend(["--region-budgets-json", json.dumps([[int(s), int(e), int(m)] for s, e, m in region_budgets])])
         if ddg_no_comp:
             cmd.append("--ddg-no-composition")
 
@@ -1244,6 +1482,69 @@ def tab_jsonl() -> None:
                 width="stretch",
             )
         _render_phase2_analytics(rows, key_prefix="jsonl_browse")
+        with st.expander("Run comparison (top-k overlap)", expanded=False):
+            path_b = st.text_input(
+                "Second JSONL path",
+                value="",
+                key="jsonl_compare_path_b",
+            )
+            top_k_cmp = st.number_input(
+                "Top-K for overlap",
+                min_value=1,
+                max_value=1000,
+                value=20,
+                key="jsonl_compare_topk",
+            )
+            if st.button("Compare runs", key="jsonl_compare_btn"):
+                p_b = Path(path_b)
+                if not p_b.is_file():
+                    st.error("Second JSONL file not found.")
+                else:
+                    rows_b: list[dict] = []
+                    with p_b.open(encoding="utf-8") as f:
+                        for i, line in enumerate(f):
+                            if i >= int(max_rows):
+                                break
+                            line = line.strip()
+                            if not line:
+                                continue
+                            try:
+                                rows_b.append(json.loads(line))
+                            except json.JSONDecodeError:
+                                continue
+                    if not rows_b:
+                        st.error("No rows parsed from second file.")
+                    else:
+                        def _sort_rows(rs: list[dict]) -> list[dict]:
+                            if rs and rs[0].get("pareto_rank") is not None:
+                                return sorted(
+                                    rs,
+                                    key=lambda r: (
+                                        int(r.get("pareto_rank") or 9999),
+                                        -float(r.get("objective_scalar") or -1e9),
+                                    ),
+                                )
+                            return sorted(rs, key=lambda r: -float(r.get("hybrid_score") or -1e9))
+
+                        a_top = [
+                            str(r.get("job_id", ""))
+                            for r in _sort_rows(rows)[: int(top_k_cmp)]
+                            if str(r.get("job_id", "")).strip()
+                        ]
+                        b_top = [
+                            str(r.get("job_id", ""))
+                            for r in _sort_rows(rows_b)[: int(top_k_cmp)]
+                            if str(r.get("job_id", "")).strip()
+                        ]
+                        sa, sb = set(a_top), set(b_top)
+                        inter = len(sa & sb)
+                        union = max(1, len(sa | sb))
+                        jacc = inter / union
+                        c1, c2, c3 = st.columns(3)
+                        c1.metric("Top-K overlap", inter)
+                        c2.metric("Jaccard", f"{jacc:.3f}")
+                        c3.metric("Shared % of K", f"{(100.0 * inter / max(int(top_k_cmp), 1)):.1f}%")
+                        st.caption(f"Shared IDs: {sorted(sa & sb)}")
 
 
 def tab_design_prediction() -> None:

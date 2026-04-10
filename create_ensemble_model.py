@@ -24,7 +24,7 @@ import pandas as pd
 import xgboost as xgb
 from sklearn.ensemble import RandomForestRegressor
 
-from protein_baseline import (
+from core.protein_baseline import (
     EnsembleModel,
     train_baseline_models,
     compute_comprehensive_metrics,

@@ -14,14 +14,14 @@ from datetime import datetime
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-from protein_baseline import (
+from core.protein_baseline import (
     EnsembleModel,
     compute_comprehensive_metrics,
     predict_with_uncertainty
 )
 from sklearn.ensemble import RandomForestRegressor
 import xgboost as xgb
-from mlp_baseline import BaselineMLP, load_embeddings_and_labels
+from core.mlp_baseline import BaselineMLP, load_embeddings_and_labels
 
 
 def load_all_data():

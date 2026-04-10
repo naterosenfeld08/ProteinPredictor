@@ -20,8 +20,8 @@ import logging
 
 from sklearn.ensemble import RandomForestRegressor
 import xgboost as xgb
-from mlp_baseline import load_embeddings_and_labels, BaselineMLP
-from protein_baseline import (
+from core.mlp_baseline import load_embeddings_and_labels, BaselineMLP
+from core.protein_baseline import (
     compute_comprehensive_metrics,
     predict_with_uncertainty,
     save_model_with_metadata,

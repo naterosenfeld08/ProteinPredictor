@@ -50,7 +50,7 @@ def main() -> int:
     out_path = Path(args.out)
 
     try:
-        from protein_baseline import predict_from_fasta
+        from core.protein_baseline import predict_from_fasta
 
         results = predict_from_fasta(
             fasta_path=args.fasta,

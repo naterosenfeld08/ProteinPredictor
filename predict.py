@@ -13,7 +13,7 @@ import sys
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from protein_baseline import (
+from core.protein_baseline import (
     predict_from_fasta,
     predict_single_sequence_with_outputs,
 )

@@ -26,13 +26,13 @@ from sklearn.metrics import (
     mean_squared_error, mean_absolute_error, r2_score
 )
 
-from protein_baseline import (
+from core.protein_baseline import (
     EmbeddingExtractor,
     add_composition_features,
     validate_sequence,
     predict_with_uncertainty
 )
-from fireprot_data_loader import FireProtDBLoader, get_all_training_indices
+from core.fireprot_data_loader import FireProtDBLoader, get_all_training_indices
 
 # Set style
 sns.set_style("whitegrid")

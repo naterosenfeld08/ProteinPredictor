@@ -635,6 +635,39 @@ def _profile_defaults(profile: str) -> dict[str, float]:
     return presets.get(profile, presets["balanced"])
 
 
+def _validate_petase_config(
+    *,
+    use_cf: bool,
+    cf_bin: str,
+    policy_random_frac: float,
+    policy_adaptive_frac: float,
+    policy_recombine_frac: float,
+    obj_w_ddg: float,
+    obj_w_phys: float,
+    obj_w_struct: float,
+    obj_w_nov: float,
+    obj_w_safe: float,
+    hybrid_cheap_weight: float,
+    hybrid_ddg_weight: float,
+) -> list[str]:
+    """Return blocking validation errors for PETase run config."""
+    errors: list[str] = []
+    if use_cf:
+        cf_bin_path = Path(str(cf_bin)).expanduser()
+        if not cf_bin_path.is_file() and shutil.which(str(cf_bin)) is None:
+            errors.append(
+                f"ColabFold executable not found: `{cf_bin}`. "
+                "Provide a valid command on PATH or an absolute executable path."
+            )
+    if float(policy_random_frac + policy_adaptive_frac + policy_recombine_frac) <= 0:
+        errors.append("Policy mix must have a positive sum.")
+    if float(obj_w_ddg + obj_w_phys + obj_w_struct + obj_w_nov + obj_w_safe) <= 0:
+        errors.append("Objective weights must have a positive sum.")
+    if float(hybrid_cheap_weight + hybrid_ddg_weight) <= 0:
+        errors.append("Hybrid cheap/ddG weights must have a positive sum.")
+    return errors
+
+
 def _load_run_summary_for_jsonl(out_jsonl: Path) -> dict | None:
     summary_path = out_jsonl.parent / "run_summary.json"
     if not summary_path.is_file():
@@ -1105,25 +1138,23 @@ def tab_petase() -> None:
         if not ddg_model_p.is_file():
             st.error(f"ddG model not found: {ddg_model_p}")
             return
-        if use_cf:
-            cf_bin_path = Path(str(cf_bin)).expanduser()
-            if not cf_bin_path.is_file() and shutil.which(str(cf_bin)) is None:
-                st.error(
-                    f"ColabFold executable not found: `{cf_bin}`. "
-                    "Provide a valid command on PATH or an absolute executable path."
-                )
-                return
-        policy_sum = float(policy_random_frac + policy_adaptive_frac + policy_recombine_frac)
-        if policy_sum <= 0:
-            st.error("Policy mix must have a positive sum.")
-            return
-        objective_sum = float(obj_w_ddg + obj_w_phys + obj_w_struct + obj_w_nov + obj_w_safe)
-        if objective_sum <= 0:
-            st.error("Objective weights must have a positive sum.")
-            return
-        hybrid_sum = float(hybrid_cheap_weight + hybrid_ddg_weight)
-        if hybrid_sum <= 0:
-            st.error("Hybrid cheap/ddG weights must have a positive sum.")
+        config_errors = _validate_petase_config(
+            use_cf=bool(use_cf),
+            cf_bin=str(cf_bin),
+            policy_random_frac=float(policy_random_frac),
+            policy_adaptive_frac=float(policy_adaptive_frac),
+            policy_recombine_frac=float(policy_recombine_frac),
+            obj_w_ddg=float(obj_w_ddg),
+            obj_w_phys=float(obj_w_phys),
+            obj_w_struct=float(obj_w_struct),
+            obj_w_nov=float(obj_w_nov),
+            obj_w_safe=float(obj_w_safe),
+            hybrid_cheap_weight=float(hybrid_cheap_weight),
+            hybrid_ddg_weight=float(hybrid_ddg_weight),
+        )
+        if config_errors:
+            for msg in config_errors:
+                st.error(msg)
             return
         if use_openmm_stage and not use_cf:
             st.warning("OpenMM stage requires structures; enable ColabFold to populate structure PDBs.")

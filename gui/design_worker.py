@@ -286,7 +286,7 @@ def main() -> int:
         from petase_design.pipeline import run_design_cycles
         from petase_design.run_summary import write_run_summary_json
         from petase_design.structure_runner import ColabFoldLocalRunner, NullStructureRunner
-        from protein_baseline import predict_from_fasta
+        from core.protein_baseline import predict_from_fasta
 
         if args.colabfold:
             extra: tuple[str, ...] = ()

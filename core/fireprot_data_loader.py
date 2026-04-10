@@ -1,12 +1,4 @@
 """
-Backward-compatible root import.
-
-Prefer importing from `core.fireprot_data_loader`.
-"""
-
-from core.fireprot_data_loader import *  # noqa: F401,F403
-
-"""
 Helper module for efficiently loading and processing FireProtDB data.
 Handles large CSV files with chunking and filtering capabilities.
 """

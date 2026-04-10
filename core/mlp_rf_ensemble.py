@@ -1,12 +1,4 @@
 """
-Backward-compatible root import.
-
-Prefer importing from `core.mlp_rf_ensemble`.
-"""
-
-from core.mlp_rf_ensemble import *  # noqa: F401,F403
-
-"""
 MLP + RandomForest ensemble for protein ΔΔG prediction.
 
 This module exists because the project's existing inference path assumes:

@@ -27,10 +27,10 @@ import torch
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import mean_absolute_error
 
-from fireprot_data_loader import FireProtDBLoader
-from mlp_baseline import BaselineMLP, DDGPredictionDataset, evaluate_model, train_mlp
-from mlp_rf_ensemble import MLPEngineConfig, MLPRandomForestEnsemble
-from protein_baseline import EmbeddingExtractor, add_composition_features, validate_sequence
+from core.fireprot_data_loader import FireProtDBLoader
+from core.mlp_baseline import BaselineMLP, DDGPredictionDataset, evaluate_model, train_mlp
+from core.mlp_rf_ensemble import MLPEngineConfig, MLPRandomForestEnsemble
+from core.protein_baseline import EmbeddingExtractor, add_composition_features, validate_sequence
 
 
 def make_stratified_splits(
@@ -254,7 +254,7 @@ def main():
             )
         if args.fireprot_csv is None:
             raise ValueError("--fetch_sequences requires --fireprot_csv to point at the FireProtDB CSV export.")
-        from uniprot_fetcher import fetch_sequences_for_fireprot
+        from core.uniprot_fetcher import fetch_sequences_for_fireprot
 
         print(f"Fetching UniProt sequences into {with_seq_path} ...")
         fetch_sequences_for_fireprot(

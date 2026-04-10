@@ -335,7 +335,7 @@ This observation is important because it suggests that improvements should focus
 
 ## Repository Structure
 
-The layout below matches this repository (flat training/CLI scripts at the root, GUI and PETase code in packages):
+The layout below matches this repository (CLI entry scripts at root; reusable modules grouped into packages):
 
 ```
 ProteinPredictor/
@@ -344,6 +344,7 @@ ProteinPredictor/
 ├── petase_design/requirements-extras.txt   # Optional: BioPython, FreeSASA
 ├── config/                           # Seeds, embedding dims, default paths, hyperparameters
 ├── embeddings/                       # Amino-acid composition + composition helpers
+├── core/                             # Canonical import surface for baseline/data modules
 ├── gui/                              # Streamlit app, subprocess workers, py3Dmol / PyMOL helpers
 ├── petase_design/                    # PETase design loop, physics score, ColabFold hook, SASA
 ├── docs/                             # Extra guides (GitHub setup, ColabFold, limitations, …)
@@ -351,10 +352,10 @@ ProteinPredictor/
 │
 ├── predict.py                        # CLI: batch FASTA or single-sequence ΔΔG prediction
 ├── train_mlp_rf_ensemble.py          # Train MLP + RF ensemble (ProtT5 + ESM-2 + composition)
-├── protein_baseline.py               # Embedding extraction, FireProt training paths, Flask API (optional)
-├── fireprot_data_loader.py           # FireProt CSV loading and splits
-├── mlp_baseline.py                   # PyTorch MLP definition and training helpers
-├── mlp_rf_ensemble.py                # MLPRandomForestEnsemble for inference
+├── protein_baseline.py               # Backward-compatible root module (prefer `core.protein_baseline`)
+├── fireprot_data_loader.py           # Backward-compatible root module (prefer `core.fireprot_data_loader`)
+├── mlp_baseline.py                   # Backward-compatible root module (prefer `core.mlp_baseline`)
+├── mlp_rf_ensemble.py                # Backward-compatible root module (prefer `core.mlp_rf_ensemble`)
 ├── validate_model.py                 # Holdout validation metrics / plots
 ├── compare_all_models.py             # Compare saved models (when artifacts exist)
 ├── create_ensemble_model.py, retrain_models_normalized.py, lock_baseline.py, …
@@ -370,7 +371,7 @@ ProteinPredictor/
 | Path | Role |
 |------|------|
 | `config/constants.py` | Single source for seeds, embedding sizes (2344), model defaults |
-| `protein_baseline.py` | Hugging Face PLMs, embedding cache, RF/XGB/ensemble training & `predict_*` |
+| `core/protein_baseline.py` | Canonical import surface for Hugging Face PLMs + training/inference helpers |
 | `gui/app.py` | Streamlit UI (ΔΔG, PETase design, JSONL browser, Structure) |
 | `gui/predict_worker.py`, `gui/design_worker.py` | Subprocess workers so the server stays responsive |
 | `petase_design/pipeline.py` | Random mutagenesis + physics scoring (+ optional ColabFold) |
@@ -487,6 +488,8 @@ In-silico loop for **theoretical IsPETase-like variants**: random mutations → 
 - **WT reference:** `petase_design/data/petase_6eqd_chainA_notag.fasta` (PDB 6EQD, His-tag removed)
 - **Run:** `python -m petase_design.run --cycles 100 --mutations 3 --out petase_design_runs/log.jsonl`
 - **Local ColabFold:** `python -m petase_design.run --colabfold --cycles …` (needs `colabfold_batch` on `PATH`; see [`docs/COLABFOLD_LOCAL.md`](docs/COLABFOLD_LOCAL.md))
+  - If installed via localcolabfold pixi, add this to your shell PATH:
+    - `export PATH="/Users/<you>/localcolabfold/.pixi/envs/default/bin:$PATH"`
 - **Efficiency mode (new):** `--structure-top-k K` with `--colabfold` does two-stage ranking: cheap sequence-only score for all proposals, then ColabFold only on top-`K` variants.
 - **Hybrid reranking (GUI worker path):** PETase runs can apply ddG-guided stage-2 reranking on a survivor subset with configurable budget, 70/20/10 survivor lanes (cheap/diversity/rescue), and uncertainty-adjusted hybrid scoring.
 - **SASA (P2):** `pip install -r petase_design/requirements-extras.txt` — when a ranked **PDB** exists, `physics_score` adds **FreeSASA** polar/apolar breakdown into the composite (`petase_design/sasa_utils.py`).

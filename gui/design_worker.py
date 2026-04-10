@@ -215,6 +215,12 @@ def main() -> int:
     ap.add_argument("--ddg-model", default="", help="Path to trained ddG model (.pkl) for hybrid rerank.")
     ap.add_argument("--ddg-survivor-pct", type=float, default=0.35, help="Fraction of variants passed to ddG stage.")
     ap.add_argument(
+        "--ddg-max-survivors",
+        type=int,
+        default=64,
+        help="Hard cap on number of variants passed to ddG stage.",
+    )
+    ap.add_argument(
         "--ddg-embedding-model-type",
         default="both",
         choices=("both", "prot_t5", "esm2"),
@@ -267,6 +273,8 @@ def main() -> int:
         raise SystemExit("Objective weight sum must be > 0.")
     if not (0.0 < float(args.ddg_survivor_pct) <= 1.0):
         raise SystemExit("--ddg-survivor-pct must be within (0, 1].")
+    if int(args.ddg_max_survivors) <= 0:
+        raise SystemExit("--ddg-max-survivors must be > 0.")
 
     # PETase loop is mostly pure Python; env still helps if optional deps spawn threads.
     configure_worker_runtime_env()
@@ -334,6 +342,11 @@ def main() -> int:
             protected_indices_override=protected_indices_override,
             region_mutation_budgets=region_mutation_budgets,
         )
+        print(
+            f"[design_worker] generated rows={len(rows)} cycles={int(args.cycles)} "
+            f"mutations_per_variant={int(args.mutations_per_variant)}",
+            flush=True,
+        )
 
         # Initialize hybrid fields.
         cheap_vals = [_safe_float((r.get("physics") or {}).get("composite"), default=-1e9) for r in rows]
@@ -369,6 +382,18 @@ def main() -> int:
                 for i in sorted(selected_idx)
                 if str(rows[i].get("sequence", "")).strip() and bool(rows[i].get("structure_viable", True))
             ]
+            max_survivors = max(1, int(args.ddg_max_survivors))
+            if len(survivors) > max_survivors:
+                survivors = sorted(
+                    survivors,
+                    key=lambda i: _safe_float((rows[i].get("physics") or {}).get("composite"), default=-1e9),
+                    reverse=True,
+                )[:max_survivors]
+            print(
+                f"[design_worker] ddg_stage survivors={len(survivors)} "
+                f"(budget={budget}, pct={pct:.3f}, cap={max_survivors})",
+                flush=True,
+            )
 
             ddg_map: dict[str, tuple[float, float | None]] = {}
             if survivors:
@@ -525,6 +550,7 @@ def main() -> int:
                 "hybrid_rerank": True,
                 "ddg_model": str(ddg_model),
                 "ddg_survivor_pct": float(args.ddg_survivor_pct),
+                "ddg_max_survivors": int(args.ddg_max_survivors),
                 "policy_mix": {
                     "random": float(args.policy_random_frac),
                     "adaptive": float(args.policy_adaptive_frac),

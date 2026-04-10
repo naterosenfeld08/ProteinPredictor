@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -140,6 +141,7 @@ def _poll_subprocess_with_ui(
     hint_terminal: str = "",
     stages: list[str] | None = None,
     on_tick: Callable[[int, float], None] | None = None,
+    max_runtime_seconds: float | None = None,
 ) -> int:
     """
     Wait for a child process while refreshing Streamlit UI.
@@ -183,6 +185,16 @@ def _poll_subprocess_with_ui(
             except Exception:
                 # Live visuals are best-effort and should never interrupt a run.
                 pass
+        if max_runtime_seconds is not None and elapsed >= float(max_runtime_seconds):
+            try:
+                proc.kill()
+            except Exception:
+                pass
+            slot.error(
+                f"{title} exceeded configured runtime limit ({max_runtime_seconds:.0f}s) and was stopped. "
+                "Reduce cycles/survivor budget or increase timeout."
+            )
+            return -9
     slot.empty()
     return int(proc.returncode or 0)
 
@@ -515,7 +527,12 @@ def _petase_results_dataframe(rows: list) -> pd.DataFrame:
     ]
     head = [c for c in priority if c in df.columns]
     tail = [c for c in df.columns if c not in head]
-    return df[head + tail]
+    out = df[head + tail]
+    if "pareto_rank" in out.columns:
+        out["pareto_rank"] = pd.to_numeric(out["pareto_rank"], errors="coerce").fillna(9999).astype(int)
+    if "objective_scalar" in out.columns:
+        out["objective_scalar"] = pd.to_numeric(out["objective_scalar"], errors="coerce").fillna(0.0)
+    return out
 
 
 def _safe_float(x: object) -> float | None:
@@ -961,6 +978,22 @@ def tab_petase() -> None:
             no_pareto_archive = st.checkbox("Disable Pareto archive guidance", value=False)
             use_openmm_stage = st.checkbox("Enable OpenMM stage (slow)", value=False)
             openmm_platform = st.text_input("OpenMM platform", value="CPU")
+            ddg_max_survivors = st.number_input(
+                "ddG max survivors (runtime guard)",
+                min_value=1,
+                max_value=2000,
+                value=64,
+                step=1,
+                help="Caps how many variants are sent to ddG embeddings regardless of survivor %.",
+            )
+            max_run_minutes = st.number_input(
+                "Max PETase worker runtime (minutes)",
+                min_value=1,
+                max_value=600,
+                value=45,
+                step=1,
+                help="Safety watchdog; worker is stopped if this limit is exceeded.",
+            )
             st.markdown("Objective scalar weights")
             o1, o2, o3, o4, o5 = st.columns(5)
             with o1:
@@ -1072,6 +1105,14 @@ def tab_petase() -> None:
         if not ddg_model_p.is_file():
             st.error(f"ddG model not found: {ddg_model_p}")
             return
+        if use_cf:
+            cf_bin_path = Path(str(cf_bin)).expanduser()
+            if not cf_bin_path.is_file() and shutil.which(str(cf_bin)) is None:
+                st.error(
+                    f"ColabFold executable not found: `{cf_bin}`. "
+                    "Provide a valid command on PATH or an absolute executable path."
+                )
+                return
         policy_sum = float(policy_random_frac + policy_adaptive_frac + policy_recombine_frac)
         if policy_sum <= 0:
             st.error("Policy mix must have a positive sum.")
@@ -1086,6 +1127,12 @@ def tab_petase() -> None:
             return
         if use_openmm_stage and not use_cf:
             st.warning("OpenMM stage requires structures; enable ColabFold to populate structure PDBs.")
+        est_survivors = max(1, int(round(float(n_cycles) * (float(ddg_survivor_pct) / 100.0))))
+        if est_survivors > int(ddg_max_survivors):
+            st.warning(
+                f"Estimated ddG survivors ({est_survivors}) exceed cap ({int(ddg_max_survivors)}); "
+                "the worker will truncate survivors to the cap."
+            )
         try:
             protected_indices = _parse_index_tokens(protected_idx_text)
             region_budgets = _parse_region_budgets(region_budget_text)
@@ -1149,6 +1196,7 @@ def tab_petase() -> None:
                 cmd.append("--colabfold-overwrite")
         cmd.extend(["--ddg-model", str(ddg_model_p)])
         cmd.extend(["--ddg-survivor-pct", str(float(ddg_survivor_pct) / 100.0)])
+        cmd.extend(["--ddg-max-survivors", str(int(ddg_max_survivors))])
         cmd.extend(["--ddg-embedding-model-type", str(ddg_embed_type)])
         cmd.extend(["--hybrid-cheap-weight", str(float(hybrid_cheap_weight))])
         cmd.extend(["--hybrid-ddg-weight", str(float(hybrid_ddg_weight))])
@@ -1176,15 +1224,31 @@ def tab_petase() -> None:
 
         try:
             live_gallery_slot = st.empty()
+            live_log_slot = st.empty()
+            worker_log = REPO_ROOT / "petase_design_runs" / "gui_design_worker.log"
+            worker_log.parent.mkdir(parents=True, exist_ok=True)
 
             def _on_tick_live_gallery(tick: int, _elapsed: float) -> None:
-                if not use_cf:
-                    return
-                if tick % 8 != 0:
-                    return
-                _render_live_colabfold_gallery(live_gallery_slot, work_root)
+                if use_cf and tick % 8 == 0:
+                    _render_live_colabfold_gallery(live_gallery_slot, work_root)
+                try:
+                    txt = worker_log.read_text(encoding="utf-8", errors="replace")
+                    lines = txt.splitlines()
+                    if lines:
+                        tail = "\n".join(lines[-25:])
+                        with live_log_slot.container():
+                            st.caption("Worker live log (tail)")
+                            st.code(tail)
+                except OSError:
+                    pass
 
-            proc = subprocess.Popen(cmd, cwd=str(REPO_ROOT))
+            with worker_log.open("w", encoding="utf-8") as logf:
+                proc = subprocess.Popen(
+                    cmd,
+                    cwd=str(REPO_ROOT),
+                    stdout=logf,
+                    stderr=subprocess.STDOUT,
+                )
             code = _poll_subprocess_with_ui(
                 proc,
                 title=f"Design loop ({n_cycles} cycles, separate process)",
@@ -1197,6 +1261,7 @@ def tab_petase() -> None:
                     "Finalize outputs",
                 ],
                 on_tick=_on_tick_live_gallery,
+                max_runtime_seconds=float(max_run_minutes) * 60.0,
             )
             raw = ""
             try:
@@ -1293,6 +1358,15 @@ def tab_petase() -> None:
         c5.metric("Best composite", "n/a" if best_composite is None else f"{best_composite:.4f}")
         c6.metric("ddG staged", f"{ddg_rate:.1f}%")
         c7.metric("Best hybrid", "n/a" if best_hybrid is None else f"{best_hybrid:.4f}")
+        if with_ddg < max(1, int(len(rows) * 0.5)):
+            st.caption(
+                "Seeing many `not_in_ddg_budget` rows is expected: ddG stage only scores a survivor subset."
+            )
+        if selected_for_structure > 0 and with_structure == 0:
+            st.error(
+                "Structure stage selected variants but produced 0 structures. "
+                "Check `petase_design_runs/structures/*/colabfold.stderr.log` for ColabFold errors."
+            )
 
         if rows:
             disp = _petase_results_dataframe(rows)

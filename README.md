@@ -505,6 +505,14 @@ In-silico loop for **theoretical IsPETase-like variants**: random mutations → 
 
 Scores are **proxies**, not measured Tm — validate top candidates experimentally.
 
+### Structural benchmark (WT vs mutant experimental structures)
+
+Automated benchmark workflow to discover WT/mutant X-ray pairs, run structure prediction, and score against experimental mutant structures with CASP-style metrics (**GDT-TS** primary, plus GDT-HA / RMS_CA / TM-score approximation).
+
+- **Run:** `python -m petase_design.benchmark_run --colabfold --max-enzymes 3 --max-pairs-per-enzyme 2 --out-dir struct_benchmark_runs/run1`
+- **Docs:** [`docs/STRUCTURAL_BENCHMARK.md`](docs/STRUCTURAL_BENCHMARK.md)
+- **Outputs:** `discovery_manifest.json`, `benchmark_results.jsonl`, `benchmark_results.csv`, `benchmark_summary.json`
+
 ### Evaluation
 
 Use `validate_model.py` and `compare_all_models.py` with the same CSV and model paths your training produced. Run `python validate_model.py --help` (and the compare script) for current flags — options depend on which artifacts are present locally.

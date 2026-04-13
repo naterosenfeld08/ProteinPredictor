@@ -1,5 +1,5 @@
 """
-ProteinPredictor — browser GUI (Streamlit).
+petase-thermostability-benchmark — browser GUI (Streamlit).
 
 Run from the repo root:
     streamlit run gui/app.py
@@ -1668,12 +1668,12 @@ def tab_design_prediction() -> None:
 
 def main() -> None:
     st.set_page_config(
-        page_title="ProteinPredictor",
+        page_title="petase-thermostability-benchmark",
         layout="wide",
         initial_sidebar_state="expanded",
     )
     _apply_presentation_css()
-    st.title("ProteinPredictor")
+    st.title("petase-thermostability-benchmark")
     st.markdown(
         f"Working directory for file paths: `{REPO_ROOT}`. "
         "Model and FASTA paths are easiest when provided relative to this folder."

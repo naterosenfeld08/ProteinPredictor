@@ -148,7 +148,7 @@ def _download_js_bytes(url: str) -> bytes:
 
     req = urllib.request.Request(
         url,
-        headers={"User-Agent": "ProteinPredictor-GUI/1"},
+        headers={"User-Agent": "petase-thermostability-benchmark-GUI/1"},
         method="GET",
     )
     with urllib.request.urlopen(req, timeout=45) as resp:
@@ -331,7 +331,7 @@ def probe_3dmol_js_url(url: str, *, read_bytes: int = 256) -> tuple[bool, str]:
 
         req = urllib.request.Request(
             url,
-            headers={"User-Agent": "ProteinPredictor-GUI/1"},
+            headers={"User-Agent": "petase-thermostability-benchmark-GUI/1"},
             method="GET",
         )
         with urllib.request.urlopen(req, timeout=4) as resp:
@@ -457,7 +457,7 @@ def build_standalone_viewer_html(
     return (
         "<!DOCTYPE html>\n<html lang=\"en\"><head><meta charset=\"utf-8\"/>\n"
         '<meta name="viewport" content="width=device-width, initial-scale=1"/>\n'
-        "<title>ProteinPredictor — structure viewer</title>\n"
+        "<title>petase-thermostability-benchmark — structure viewer</title>\n"
         f"{_VIEWER_PAGE_STYLE}\n"
         "</head>\n"
         f'<body><div id="pp-outer">{inner}</div></body>\n</html>\n'

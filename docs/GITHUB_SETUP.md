@@ -23,7 +23,7 @@ pip --version
 ## 2. Python environment (recommended)
 
 ```bash
-cd /path/to/ProteinPredictor
+cd /path/to/petase-thermostability-benchmark
 python3 -m venv venv
 source venv/bin/activate   # Windows: venv\Scripts\activate
 pip install --upgrade pip
@@ -101,7 +101,7 @@ After installing `gh`:
 
 ```bash
 gh auth login
-cd /path/to/ProteinPredictor
+cd /path/to/petase-thermostability-benchmark
 gh repo create NEW_REPO --private --source=. --remote=origin --push
 ```
 

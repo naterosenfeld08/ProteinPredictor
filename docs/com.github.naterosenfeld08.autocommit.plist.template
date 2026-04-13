@@ -9,7 +9,7 @@
 	<array>
 		<string>/bin/bash</string>
 		<string>-lc</string>
-		<string>export AUTO_COMMIT_REPO_DIR=$HOME/Developer/daily-activity; export PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin; exec /Users/YOURUSERNAME/ProteinPredictor/scripts/auto_contribution_commit.sh</string>
+		<string>export AUTO_COMMIT_REPO_DIR=$HOME/Developer/daily-activity; export PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin; exec /Users/YOURUSERNAME/petase-thermostability-benchmark/scripts/auto_contribution_commit.sh</string>
 	</array>
 
 	<!-- Every day at 12:00 local time -->

@@ -338,7 +338,7 @@ This observation is important because it suggests that improvements should focus
 The layout below matches this repository (CLI entry scripts at root; reusable modules grouped into packages):
 
 ```
-ProteinPredictor/
+petase-thermostability-benchmark/
 ├── README.md
 ├── requirements.txt                  # Core Python deps (see header in file)
 ├── petase_design/requirements-extras.txt   # Optional: BioPython, FreeSASA
@@ -389,8 +389,8 @@ ProteinPredictor/
 
 ```bash
 # Clone repository
-git clone https://github.com/naterosenfeld08/ProteinPredictor.git
-cd ProteinPredictor
+git clone https://github.com/naterosenfeld08/petase-thermostability-benchmark.git
+cd petase-thermostability-benchmark
 
 # Create virtual environment (name is arbitrary: .venv, venv, …)
 python -m venv .venv
@@ -551,7 +551,7 @@ If you use this codebase, please cite:
   title = {Protein Stability Prediction Using Pretrained Embeddings},
   author = {Nate Rosenfeld},
   year = {2026},
-  url = {https://github.com/naterosenfeld08/ProteinPredictor}
+  url = {https://github.com/naterosenfeld08/petase-thermostability-benchmark}
 }
 ```
 

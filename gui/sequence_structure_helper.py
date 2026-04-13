@@ -155,7 +155,7 @@ def find_known_structure_match(seq: str) -> dict[str, str] | None:
 def _download_text(url: str) -> str:
     req = urllib.request.Request(
         url,
-        headers={"User-Agent": "ProteinPredictor-GUI/1"},
+        headers={"User-Agent": "petase-thermostability-benchmark-GUI/1"},
         method="GET",
     )
     with urllib.request.urlopen(req, timeout=25) as resp:

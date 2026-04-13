@@ -54,7 +54,7 @@ Goal: **Option C** — a generation loop that proposes **theoretical PETase vari
 ### P0 usage (now)
 
 ```bash
-cd /path/to/ProteinPredictor
+cd /path/to/petase-thermostability-benchmark
 python -m petase_design.run --cycles 100 --mutations 3 --out petase_design_runs/log.jsonl
 ```
 

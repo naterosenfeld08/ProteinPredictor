@@ -1,13 +1,13 @@
 # Scheduled empty commits (macOS) — optional
 
-This is for a **separate, small GitHub repo** you use only for daily empty commits, so your main project (e.g. ProteinPredictor) does not fill with noise.
+This is for a **separate, small GitHub repo** you use only for daily empty commits, so your main project (e.g. petase-thermostability-benchmark) does not fill with noise.
 
 **Note:** The contribution graph is meant to reflect activity you care about; empty commits are allowed by Git but are purely cosmetic.
 
 ## 1. Create a repo on GitHub
 
 1. New repository → e.g. `daily-activity` → **private** is fine → **no** README (empty).
-2. Clone with SSH (same setup as ProteinPredictor):
+2. Clone with SSH (same setup as petase-thermostability-benchmark):
 
    ```bash
    mkdir -p ~/Developer
@@ -36,7 +36,7 @@ Or edit `REPO_DIR` in `scripts/auto_contribution_commit.sh`.
 ## 3. Make executable and test once
 
 ```bash
-cd /path/to/ProteinPredictor
+cd /path/to/petase-thermostability-benchmark
 chmod +x scripts/auto_contribution_commit.sh
 AUTO_COMMIT_REPO_DIR="$HOME/Developer/daily-activity" ./scripts/auto_contribution_commit.sh
 ```
@@ -109,7 +109,7 @@ crontab -e
 Add (adjust paths):
 
 ```cron
-0 12 * * * AUTO_COMMIT_REPO_DIR=$HOME/Developer/daily-activity /bin/bash /Users/YOU/ProteinPredictor/scripts/auto_contribution_commit.sh >> $HOME/.local/share/auto_commit.cron.log 2>&1
+0 12 * * * AUTO_COMMIT_REPO_DIR=$HOME/Developer/daily-activity /bin/bash /Users/YOU/petase-thermostability-benchmark/scripts/auto_contribution_commit.sh >> $HOME/.local/share/auto_commit.cron.log 2>&1
 ```
 
 If push fails, switch to LaunchAgent or run from a small VPS with SSH deploy key.

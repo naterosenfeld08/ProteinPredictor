@@ -1,4 +1,4 @@
-# ProteinPredictor — core dependencies (pip install -r requirements.txt)
+# petase-thermostability-benchmark — core dependencies (pip install -r requirements.txt)
 # Python: 3.9+ recommended. Install a matching PyTorch build for your OS/GPU from pytorch.org if needed.
 #
 # Groups:

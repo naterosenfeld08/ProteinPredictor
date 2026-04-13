@@ -48,6 +48,35 @@ Useful flags:
 | `--min-seq-identity` | Tighten/relax WT↔mutant sequence comparability in discovery |
 | `--max-len-delta-frac` | Maximum relative sequence length mismatch allowed for pairing |
 | `--colabfold-bin` | Path/name of `colabfold_batch` |
+| `--disable-sequence-diff-fallback` | Turn off fallback that infers single-point mutants from WT↔mutant sequence diffs |
+| `--gdt-ts-min` | Optional quality threshold used in calibration flags |
+| `--coverage-min` | Optional coverage threshold used in calibration flags |
+
+## Design CLI Integration
+
+Design runs can now attach structural benchmark evidence to each structure-scored variant when a benchmark manifest is available.
+
+```bash
+python -m petase_design.run \
+  --colabfold \
+  --cycles 20 \
+  --mutations 2 \
+  --struct-benchmark-manifest struct_benchmark_runs/real_colabfold_pilot/pilot_manifest.json \
+  --struct-benchmark-gdt-ts-min 50 \
+  --struct-benchmark-coverage-min 95 \
+  --struct-benchmark-weight 0.20 \
+  --out petase_design_runs/design_with_benchmark.jsonl
+```
+
+Key integration flags:
+
+| Flag | Meaning |
+|------|---------|
+| `--struct-benchmark-manifest path.json` | Benchmark reference pairs used to evaluate matching design variants |
+| `--struct-benchmark-include-controls` | Also compute predicted WT control blocks (slower) |
+| `--struct-benchmark-gdt-ts-min` | Marks low-quality benchmark matches in calibration flags |
+| `--struct-benchmark-coverage-min` | Marks low-coverage comparisons in calibration flags |
+| `--struct-benchmark-weight` | Blends benchmark GDT signal into archive ranking score |
 
 ## Outputs
 
@@ -59,6 +88,7 @@ Under `--out-dir`:
   - exclusion reasons for rejected entries
 - `benchmark_results.jsonl`
   - one record per benchmark case
+  - includes `calibration.*` fields (main score, baseline deltas, quality flags)
 - `benchmark_results.csv`
   - flattened table for spreadsheet/statistical analysis
 - `benchmark_summary.json`
@@ -77,6 +107,7 @@ Under `--out-dir`:
 
 ## Current Scope
 
-- Discovery currently filters to single-protein-entity X-ray entries with parseable mutation annotations.
-- Mutant inclusion is currently limited to single missense-like annotations.
+- Discovery uses a strict metadata path first, then a fallback that infers single-point mutants from sequence diffs inside UniProt-grouped entries when mutation annotations are missing/noisy.
+- Mutant inclusion remains restricted to single missense-like changes for benchmark pairing.
 - CASP-like metrics are implemented on C-alpha superposition with sequence-dependent residue mapping.
+- Design-loop integration writes `struct_benchmark.*` blocks only for variants with predicted structures and matching manifest mutation codes.

@@ -24,7 +24,12 @@ from petase_design.struct_benchmark_discovery import (
     discover_wt_mutant_pairs,
     write_discovery_manifest,
 )
-from petase_design.struct_benchmark_metrics import compare_structures_ca, metrics_to_dict, write_chain_only_pdb
+from petase_design.struct_benchmark_metrics import (
+    build_calibration_profile,
+    compare_structures_ca,
+    metrics_to_dict,
+    write_chain_only_pdb,
+)
 from petase_design.structure_runner import ColabFoldLocalRunner, NullStructureRunner, StructureRunner
 
 
@@ -50,6 +55,8 @@ def _score_pair(
     pred_dir: Path,
     include_controls: bool,
     wt_pred_cache: dict[str, Path],
+    gdt_ts_min: float | None,
+    coverage_min: float | None,
 ) -> dict[str, Any]:
     row: dict[str, Any] = {
         "job_id": f"{pair.enzyme_key}:{pair.wt_pdb_id}:{pair.mut_pdb_id}:{pair.mutation_code}",
@@ -100,6 +107,9 @@ def _score_pair(
 
         m_main = compare_structures_ca(pred_mut, mut_chain, model_chain=None, target_chain=None)
         metrics["predicted_mutant_vs_experimental_mutant"] = metrics_to_dict(m_main)
+        metrics["experimental_wt_vs_experimental_mutant"] = metrics_to_dict(
+            compare_structures_ca(wt_chain, mut_chain, model_chain=None, target_chain=None)
+        )
 
         if include_controls:
             wt_cache_key = f"{pair.wt_pdb_id}:{pair.wt_chain_id}"
@@ -117,9 +127,11 @@ def _score_pair(
             metrics["predicted_wt_vs_experimental_mutant"] = metrics_to_dict(
                 compare_structures_ca(wt_pred_path, mut_chain, model_chain=None, target_chain=None)
             )
-            metrics["experimental_wt_vs_experimental_mutant"] = metrics_to_dict(
-                compare_structures_ca(wt_chain, mut_chain, model_chain=None, target_chain=None)
-            )
+        row["calibration"] = build_calibration_profile(
+            metrics,
+            gdt_ts_min=gdt_ts_min,
+            coverage_min=coverage_min,
+        )
     except Exception as e:
         row["status"] = "error"
         row["error"] = str(e)
@@ -242,6 +254,13 @@ def main() -> None:
     ap.add_argument("--min-seq-identity", type=float, default=0.95)
     ap.add_argument("--max-len-delta-frac", type=float, default=0.05)
     ap.add_argument("--skip-controls", action="store_true", help="Skip WT control comparisons to save runtime")
+    ap.add_argument("--gdt-ts-min", type=float, default=None, help="Optional quality threshold for calibration flags")
+    ap.add_argument("--coverage-min", type=float, default=None, help="Optional coverage threshold for calibration flags")
+    ap.add_argument(
+        "--disable-sequence-diff-fallback",
+        action="store_true",
+        help="Disable discovery fallback that infers single-point mutants from sequence diffs",
+    )
 
     ap.add_argument("--colabfold", action="store_true", help="Run local colabfold_batch predictions")
     ap.add_argument("--colabfold-bin", default="colabfold_batch")
@@ -251,6 +270,10 @@ def main() -> None:
     ap.add_argument("--colabfold-arg", action="append", default=[], metavar="ARG")
     ap.add_argument("--colabfold-extra", default="")
     args = ap.parse_args()
+    if args.gdt_ts_min is not None and not (0.0 <= float(args.gdt_ts_min) <= 100.0):
+        raise SystemExit("--gdt-ts-min must be within [0,100].")
+    if args.coverage_min is not None and not (0.0 <= float(args.coverage_min) <= 100.0):
+        raise SystemExit("--coverage-min must be within [0,100].")
 
     out_dir = args.out_dir
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -273,6 +296,7 @@ def main() -> None:
             resolution_max_a=float(args.resolution_max),
             min_seq_identity=float(args.min_seq_identity),
             max_len_delta_frac=float(args.max_len_delta_frac),
+            enable_sequence_diff_fallback=not bool(args.disable_sequence_diff_fallback),
         )
     write_discovery_manifest(report, out_dir / "discovery_manifest.json")
 
@@ -294,6 +318,8 @@ def main() -> None:
             pred_dir=pred_dir,
             include_controls=not bool(args.skip_controls),
             wt_pred_cache=wt_pred_cache,
+            gdt_ts_min=float(args.gdt_ts_min) if args.gdt_ts_min is not None else None,
+            coverage_min=float(args.coverage_min) if args.coverage_min is not None else None,
         )
         rows.append(row)
 

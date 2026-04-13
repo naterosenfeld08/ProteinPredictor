@@ -510,8 +510,10 @@ Scores are **proxies**, not measured Tm — validate top candidates experimental
 Automated benchmark workflow to discover WT/mutant X-ray pairs, run structure prediction, and score against experimental mutant structures with CASP-style metrics (**GDT-TS** primary, plus GDT-HA / RMS_CA / TM-score approximation).
 
 - **Run:** `python -m petase_design.benchmark_run --colabfold --max-enzymes 3 --max-pairs-per-enzyme 2 --out-dir struct_benchmark_runs/run1`
+- **Design integration:** `python -m petase_design.run --colabfold --struct-benchmark-manifest <manifest.json> --struct-benchmark-weight 0.2 --out petase_design_runs/design_with_benchmark.jsonl`
 - **Docs:** [`docs/STRUCTURAL_BENCHMARK.md`](docs/STRUCTURAL_BENCHMARK.md)
 - **Outputs:** `discovery_manifest.json`, `benchmark_results.jsonl`, `benchmark_results.csv`, `benchmark_summary.json`
+- **Smoke validation:** `python scripts/struct_benchmark_smoke.py`
 
 ### Evaluation
 

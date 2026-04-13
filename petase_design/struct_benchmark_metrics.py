@@ -255,3 +255,65 @@ def compare_structures_ca(
 
 def metrics_to_dict(metrics: StructuralMetrics) -> dict[str, Any]:
     return asdict(metrics)
+
+
+def build_calibration_profile(
+    metric_blocks: dict[str, dict[str, Any]],
+    *,
+    gdt_ts_min: float | None = None,
+    coverage_min: float | None = None,
+) -> dict[str, Any]:
+    """
+    Compute normalized calibration fields from standardized metric blocks.
+
+    Expected block names (when available):
+    - predicted_mutant_vs_experimental_mutant
+    - predicted_wt_vs_experimental_wt
+    - predicted_wt_vs_experimental_mutant
+    - experimental_wt_vs_experimental_mutant
+    """
+    main = metric_blocks.get("predicted_mutant_vs_experimental_mutant") or {}
+    wt_baseline = metric_blocks.get("predicted_wt_vs_experimental_wt") or {}
+    exp_delta = metric_blocks.get("experimental_wt_vs_experimental_mutant") or {}
+
+    def _f(d: dict[str, Any], key: str) -> float | None:
+        try:
+            v = d.get(key)
+            if v is None:
+                return None
+            return float(v)
+        except (TypeError, ValueError):
+            return None
+
+    main_gdt = _f(main, "gdt_ts")
+    main_tm = _f(main, "tm_score")
+    main_cov = _f(main, "percent_coverage")
+    wt_gdt = _f(wt_baseline, "gdt_ts")
+    wt_tm = _f(wt_baseline, "tm_score")
+    exp_wt_mut_gdt = _f(exp_delta, "gdt_ts")
+    exp_wt_mut_tm = _f(exp_delta, "tm_score")
+
+    delta_gdt_vs_wt = (main_gdt - wt_gdt) if (main_gdt is not None and wt_gdt is not None) else None
+    delta_tm_vs_wt = (main_tm - wt_tm) if (main_tm is not None and wt_tm is not None) else None
+    delta_gdt_vs_exp = (main_gdt - exp_wt_mut_gdt) if (main_gdt is not None and exp_wt_mut_gdt is not None) else None
+    delta_tm_vs_exp = (main_tm - exp_wt_mut_tm) if (main_tm is not None and exp_wt_mut_tm is not None) else None
+
+    quality_flags: list[str] = []
+    if gdt_ts_min is not None and main_gdt is not None and main_gdt < float(gdt_ts_min):
+        quality_flags.append("low_gdt_ts")
+    if coverage_min is not None and main_cov is not None and main_cov < float(coverage_min):
+        quality_flags.append("low_coverage")
+
+    return {
+        "main_gdt_ts": main_gdt,
+        "main_tm_score": main_tm,
+        "main_percent_coverage": main_cov,
+        "delta_gdt_vs_wt_baseline": delta_gdt_vs_wt,
+        "delta_tm_vs_wt_baseline": delta_tm_vs_wt,
+        "delta_gdt_vs_experimental_wt_mutant": delta_gdt_vs_exp,
+        "delta_tm_vs_experimental_wt_mutant": delta_tm_vs_exp,
+        "has_wt_control_baseline": wt_gdt is not None,
+        "has_experimental_wt_mutant_baseline": exp_wt_mut_gdt is not None,
+        "passes_thresholds": len(quality_flags) == 0,
+        "quality_flags": quality_flags,
+    }

@@ -45,12 +45,34 @@ def build_run_summary(
     n_variants = len(rows)
     n_with_structure = 0
     n_with_sasa = 0
+    n_with_struct_benchmark = 0
+    n_struct_benchmark_ok = 0
+    gdt_vals: list[float] = []
+    tm_vals: list[float] = []
     for row in rows:
         if row.get("structure_pdb"):
             n_with_structure += 1
         phys = row.get("physics") or {}
         if phys.get("sasa_total_area") is not None:
             n_with_sasa += 1
+        sb = row.get("struct_benchmark")
+        if isinstance(sb, dict):
+            n_with_struct_benchmark += 1
+            if str(sb.get("status")) == "ok":
+                n_struct_benchmark_ok += 1
+                calib = sb.get("calibration") or {}
+                try:
+                    g = calib.get("main_gdt_ts")
+                    if g is not None:
+                        gdt_vals.append(float(g))
+                except (TypeError, ValueError):
+                    pass
+                try:
+                    t = calib.get("main_tm_score")
+                    if t is not None:
+                        tm_vals.append(float(t))
+                except (TypeError, ValueError):
+                    pass
     policy_counts: dict[str, int] = {}
     selected_by_counts: dict[str, int] = {}
     pareto_frontier_count = 0
@@ -87,6 +109,9 @@ def build_run_summary(
                 "sasa_total_area": phys.get("sasa_total_area"),
                 "sequence_length": slen,
                 "sequence_preview": sprev,
+                "struct_benchmark_status": ((row.get("struct_benchmark") or {}).get("status") if isinstance(row.get("struct_benchmark"), dict) else None),
+                "struct_benchmark_main_gdt_ts": (((row.get("struct_benchmark") or {}).get("calibration") or {}).get("main_gdt_ts") if isinstance(row.get("struct_benchmark"), dict) else None),
+                "rank_score": row.get("rank_score"),
             }
         )
 
@@ -98,6 +123,8 @@ def build_run_summary(
             "n_variants": n_variants,
             "n_with_structure": n_with_structure,
             "n_with_sasa": n_with_sasa,
+            "n_with_struct_benchmark": n_with_struct_benchmark,
+            "n_struct_benchmark_ok": n_struct_benchmark_ok,
             "pareto_frontier_count": pareto_frontier_count,
         },
         "composition": {
@@ -108,6 +135,12 @@ def build_run_summary(
             "seconds_wall": round(wall_seconds, 3),
             "started_at": started_at_iso,
             "ended_at": ended_at_iso,
+        },
+        "struct_benchmark": {
+            "main_gdt_ts_mean": (float(sum(gdt_vals) / len(gdt_vals)) if gdt_vals else None),
+            "main_gdt_ts_max": (float(max(gdt_vals)) if gdt_vals else None),
+            "main_tm_score_mean": (float(sum(tm_vals) / len(tm_vals)) if tm_vals else None),
+            "main_tm_score_max": (float(max(tm_vals)) if tm_vals else None),
         },
         "top_variants": top,
     }

@@ -37,6 +37,7 @@ class StructureCandidate:
     is_wildtype: bool
     sequence: str
     resolution_a: float | None
+    entry_title: str
 
 
 @dataclass
@@ -171,6 +172,31 @@ def _extract_ec_key(polymer_payload: dict[str, Any]) -> str | None:
     return ",".join(sorted(str(x) for x in ecs if x))
 
 
+def _looks_mutant_title(title: str) -> bool:
+    t = title.strip().lower()
+    if not t:
+        return False
+    keys = (" mutant", "mutant ", "mutant-", " mutant-", "variant", "substitution")
+    return any(k in t for k in keys)
+
+
+def _derive_single_mutation_code(wt_seq: str, mut_seq: str) -> str | None:
+    if len(wt_seq) != len(mut_seq) or not wt_seq:
+        return None
+    diffs: list[tuple[int, str, str]] = []
+    for i, (a, b) in enumerate(zip(wt_seq, mut_seq), start=1):
+        if a != b:
+            diffs.append((i, a, b))
+            if len(diffs) > 1:
+                return None
+    if len(diffs) != 1:
+        return None
+    pos, a0, a1 = diffs[0]
+    if a0 not in AA_SET or a1 not in AA_SET:
+        return None
+    return f"{a0}{pos}{a1}"
+
+
 def _search_entry_ids(*, max_entries: int, resolution_max_a: float) -> list[str]:
     query = {
         "query": {
@@ -229,10 +255,11 @@ def discover_wt_mutant_pairs(
     resolution_max_a: float = 2.8,
     min_seq_identity: float = 0.95,
     max_len_delta_frac: float = 0.05,
+    enable_sequence_diff_fallback: bool = True,
 ) -> DiscoveryReport:
     exclusions: list[dict[str, Any]] = []
     candidates: list[StructureCandidate] = []
-    stats: dict[str, Any] = {"searched_entries": 0, "candidate_entries": 0}
+    stats: dict[str, Any] = {"searched_entries": 0, "candidate_entries": 0, "fallback_pairs": 0}
 
     try:
         entry_ids = _search_entry_ids(max_entries=max_entries, resolution_max_a=resolution_max_a)
@@ -244,6 +271,7 @@ def discover_wt_mutant_pairs(
     for pdb_id in entry_ids:
         try:
             entry_payload = _http_json(RCSB_ENTRY_URL.format(pdb_id=pdb_id.lower()))
+            entry_title = str((entry_payload.get("struct") or {}).get("title") or "").strip()
             entity_ids = (entry_payload.get("rcsb_entry_container_identifiers") or {}).get("polymer_entity_ids") or []
             if len(entity_ids) != 1:
                 exclusions.append({"pdb_id": pdb_id, "reason": "not_single_protein_entity"})
@@ -262,9 +290,19 @@ def discover_wt_mutant_pairs(
 
             mutation_raw = (polymer_payload.get("entity_poly") or {}).get("pdbx_mutation")
             is_wt, mutation_code = _normalize_mutation(mutation_raw)
+            if is_wt and mutation_code is None and _looks_mutant_title(entry_title):
+                # Many RCSB entries omit machine-readable mutation annotations even for mutants.
+                # Promote these to unresolved mutant candidates for sequence-diff fallback.
+                is_wt = False
+                stats["title_promoted_mutants"] = int(stats.get("title_promoted_mutants", 0)) + 1
             if not is_wt and mutation_code is None:
-                exclusions.append({"pdb_id": pdb_id, "reason": "unsupported_mutation_annotation", "mutation_raw": mutation_raw})
-                continue
+                exclusions.append(
+                    {
+                        "pdb_id": pdb_id,
+                        "reason": "unsupported_mutation_annotation_kept_for_fallback",
+                        "mutation_raw": mutation_raw,
+                    }
+                )
 
             enzyme_label = _extract_enzyme_label(polymer_payload)
             uniprot_id = _extract_uniprot_id(polymer_payload)
@@ -284,6 +322,7 @@ def discover_wt_mutant_pairs(
                     is_wildtype=is_wt,
                     sequence=seq,
                     resolution_a=_parse_resolution(entry_payload),
+                    entry_title=entry_title,
                 )
             )
         except Exception as e:  # network/schema drifts should not kill full discovery
@@ -295,7 +334,23 @@ def discover_wt_mutant_pairs(
     for c in candidates:
         by_enzyme.setdefault(c.enzyme_key, []).append(c)
 
+    def _pick_best_wt(mut: StructureCandidate, wt_rows: list[StructureCandidate]) -> tuple[StructureCandidate | None, float]:
+        best_wt: StructureCandidate | None = None
+        best_ident = -1.0
+        for wt in wt_rows:
+            ident = _sequence_identity(wt.sequence, mut.sequence)
+            len_delta = abs(len(wt.sequence) - len(mut.sequence)) / max(len(wt.sequence), len(mut.sequence), 1)
+            if len_delta > max_len_delta_frac:
+                continue
+            if ident < min_seq_identity:
+                continue
+            if ident > best_ident:
+                best_ident = ident
+                best_wt = wt
+        return best_wt, best_ident
+
     pairs: list[BenchmarkPair] = []
+    used_pair_keys: set[tuple[str, str, str, str]] = set()
     chosen_enzyme_keys = sorted(by_enzyme.keys())
     for enzyme_key in chosen_enzyme_keys:
         if len({p.enzyme_key for p in pairs}) >= int(max_enzymes):
@@ -303,27 +358,19 @@ def discover_wt_mutant_pairs(
 
         rows = by_enzyme[enzyme_key]
         wt_rows = [x for x in rows if x.is_wildtype]
-        mut_rows = [x for x in rows if not x.is_wildtype and x.mutation_code]
-        if not wt_rows or not mut_rows:
+        strict_mut_rows = [x for x in rows if not x.is_wildtype and x.mutation_code]
+        unresolved_mut_rows = [x for x in rows if not x.is_wildtype and not x.mutation_code]
+        if not wt_rows or (not strict_mut_rows and not (enable_sequence_diff_fallback and unresolved_mut_rows)):
             exclusions.append({"enzyme_key": enzyme_key, "reason": "missing_wt_or_mutant_in_group"})
             continue
 
         wt_rows = sorted(wt_rows, key=lambda r: (r.resolution_a is None, r.resolution_a or 999.0))
-        mut_rows = sorted(mut_rows, key=lambda r: (r.resolution_a is None, r.resolution_a or 999.0))
+        strict_mut_rows = sorted(strict_mut_rows, key=lambda r: (r.resolution_a is None, r.resolution_a or 999.0))
+        unresolved_mut_rows = sorted(unresolved_mut_rows, key=lambda r: (r.resolution_a is None, r.resolution_a or 999.0))
         per_enzyme_pairs = 0
-        for mut in mut_rows:
-            best_wt: StructureCandidate | None = None
-            best_ident = -1.0
-            for wt in wt_rows:
-                ident = _sequence_identity(wt.sequence, mut.sequence)
-                len_delta = abs(len(wt.sequence) - len(mut.sequence)) / max(len(wt.sequence), len(mut.sequence), 1)
-                if len_delta > max_len_delta_frac:
-                    continue
-                if ident < min_seq_identity:
-                    continue
-                if ident > best_ident:
-                    best_ident = ident
-                    best_wt = wt
+
+        for mut in strict_mut_rows:
+            best_wt, best_ident = _pick_best_wt(mut, wt_rows)
             if best_wt is None:
                 exclusions.append(
                     {
@@ -334,6 +381,10 @@ def discover_wt_mutant_pairs(
                     }
                 )
                 continue
+            pair_key = (enzyme_key, best_wt.pdb_id, mut.pdb_id, str(mut.mutation_code))
+            if pair_key in used_pair_keys:
+                continue
+            used_pair_keys.add(pair_key)
 
             pairs.append(
                 BenchmarkPair(
@@ -358,6 +409,69 @@ def discover_wt_mutant_pairs(
             per_enzyme_pairs += 1
             if per_enzyme_pairs >= int(max_pairs_per_enzyme):
                 break
+
+        if enable_sequence_diff_fallback and per_enzyme_pairs < int(max_pairs_per_enzyme):
+            for mut in unresolved_mut_rows:
+                if not _looks_mutant_title(mut.entry_title):
+                    exclusions.append(
+                        {
+                            "enzyme_key": enzyme_key,
+                            "pdb_id": mut.pdb_id,
+                            "reason": "fallback_skipped_title_not_mutant_like",
+                            "entry_title": mut.entry_title,
+                        }
+                    )
+                    continue
+                best_wt, best_ident = _pick_best_wt(mut, wt_rows)
+                if best_wt is None:
+                    exclusions.append(
+                        {
+                            "enzyme_key": enzyme_key,
+                            "pdb_id": mut.pdb_id,
+                            "reason": "fallback_no_comparable_wt_match",
+                            "min_seq_identity": min_seq_identity,
+                        }
+                    )
+                    continue
+                derived = _derive_single_mutation_code(best_wt.sequence, mut.sequence)
+                if derived is None:
+                    exclusions.append(
+                        {
+                            "enzyme_key": enzyme_key,
+                            "pdb_id": mut.pdb_id,
+                            "wt_pdb_id": best_wt.pdb_id,
+                            "reason": "fallback_not_single_missense_diff",
+                        }
+                    )
+                    continue
+                pair_key = (enzyme_key, best_wt.pdb_id, mut.pdb_id, derived)
+                if pair_key in used_pair_keys:
+                    continue
+                used_pair_keys.add(pair_key)
+                stats["fallback_pairs"] = int(stats.get("fallback_pairs", 0)) + 1
+                pairs.append(
+                    BenchmarkPair(
+                        enzyme_key=enzyme_key,
+                        enzyme_label=mut.enzyme_label,
+                        uniprot_id=mut.uniprot_id,
+                        wt_pdb_id=best_wt.pdb_id,
+                        wt_entity_id=best_wt.entity_id,
+                        wt_chain_id=best_wt.chain_id,
+                        wt_sequence=best_wt.sequence,
+                        wt_resolution_a=best_wt.resolution_a,
+                        mut_pdb_id=mut.pdb_id,
+                        mut_entity_id=mut.entity_id,
+                        mut_chain_id=mut.chain_id,
+                        mut_sequence=mut.sequence,
+                        mut_resolution_a=mut.resolution_a,
+                        mutation_code=derived,
+                        mutation_raw=mut.mutation_raw,
+                        seq_identity=max(best_ident, 0.0),
+                    )
+                )
+                per_enzyme_pairs += 1
+                if per_enzyme_pairs >= int(max_pairs_per_enzyme):
+                    break
 
     stats["selected_pairs"] = len(pairs)
     stats["selected_enzymes"] = len({p.enzyme_key for p in pairs})

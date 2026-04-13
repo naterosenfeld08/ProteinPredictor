@@ -10,8 +10,16 @@ import time
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
+from urllib.request import urlretrieve
 
 from petase_design import config
+from petase_design.struct_benchmark_discovery import BenchmarkPair
+from petase_design.struct_benchmark_metrics import (
+    build_calibration_profile,
+    compare_structures_ca,
+    metrics_to_dict,
+    write_chain_only_pdb,
+)
 from petase_design.run_summary import write_run_summary_json
 from petase_design.mutagenesis import (
     propose_random_mutations,
@@ -56,6 +64,11 @@ def run_design_cycles(
     openmm_platform: str = "CPU",
     protected_indices_override: list[int] | None = None,
     region_mutation_budgets: list[tuple[int, int, int]] | None = None,
+    struct_benchmark_manifest: Path | None = None,
+    struct_benchmark_include_controls: bool = False,
+    struct_benchmark_gdt_ts_min: float | None = None,
+    struct_benchmark_coverage_min: float | None = None,
+    struct_benchmark_weight: float = 0.0,
 ) -> list[dict[str, Any]]:
     """Generate, score, and optionally structure-rerank PETase variants."""
     t_wall0 = time.time()
@@ -88,6 +101,37 @@ def run_design_cycles(
     archive_sequences: dict[str, str] = {}
     seen_sequences: set[str] = {wt}
     region_mutation_budgets = list(region_mutation_budgets or [])
+    struct_benchmark_weight = float(struct_benchmark_weight)
+
+    benchmark_pairs_by_mut: dict[str, list[BenchmarkPair]] = {}
+    benchmark_exp_dir = work_root / "_struct_benchmark_refs"
+    benchmark_pred_wt_dir = work_root / "_struct_benchmark_controls"
+    wt_pred_cache: dict[str, Path] = {}
+    benchmark_config: dict[str, Any] = {
+        "enabled": False,
+        "manifest": str(struct_benchmark_manifest) if struct_benchmark_manifest else None,
+        "include_controls": bool(struct_benchmark_include_controls),
+        "gdt_ts_min": struct_benchmark_gdt_ts_min,
+        "coverage_min": struct_benchmark_coverage_min,
+        "weight": struct_benchmark_weight,
+    }
+    if struct_benchmark_manifest and struct_benchmark_manifest.is_file():
+        try:
+            payload = json.loads(struct_benchmark_manifest.read_text(encoding="utf-8"))
+            for item in payload.get("pairs", []):
+                try:
+                    pair = BenchmarkPair(**item)
+                except TypeError:
+                    continue
+                benchmark_pairs_by_mut.setdefault(str(pair.mutation_code), []).append(pair)
+            for key in list(benchmark_pairs_by_mut.keys()):
+                benchmark_pairs_by_mut[key].sort(key=lambda p: (p.seq_identity, -(p.wt_resolution_a or 999.0)), reverse=True)
+            benchmark_config["enabled"] = bool(benchmark_pairs_by_mut)
+            benchmark_config["manifest_pairs"] = sum(len(v) for v in benchmark_pairs_by_mut.values())
+        except Exception as e:
+            benchmark_config["load_error"] = str(e)
+            benchmark_pairs_by_mut = {}
+            benchmark_config["enabled"] = False
 
     def _safe_float(x: object, default: float = 0.0) -> float:
         try:
@@ -96,6 +140,51 @@ def run_design_cycles(
             return float(x)
         except (TypeError, ValueError):
             return default
+
+    def _download_pdb(pdb_id: str, out_dir: Path) -> Path:
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out_path = out_dir / f"{pdb_id.lower()}.pdb"
+        if out_path.is_file():
+            return out_path
+        url = f"https://files.rcsb.org/download/{pdb_id.upper()}.pdb"
+        urlretrieve(url, out_path)
+        return out_path
+
+    def _single_mutation_code(seq: str) -> str | None:
+        diffs = mutation_diff(wt, seq)
+        if len(diffs) != 1:
+            return None
+        i, a_wt, a_mut = diffs[0]
+        return f"{a_wt}{int(i) + 1}{a_mut}"
+
+    def _benchmark_rank_bonus(row: dict[str, Any]) -> float:
+        if struct_benchmark_weight == 0.0:
+            return 0.0
+        sb = row.get("struct_benchmark") or {}
+        calib = sb.get("calibration") or {}
+        main_gdt = _safe_float(calib.get("main_gdt_ts"), default=float("nan"))
+        if main_gdt != main_gdt:  # NaN
+            return 0.0
+        bonus = struct_benchmark_weight * max(0.0, min(1.0, main_gdt / 100.0))
+        if not bool(calib.get("passes_thresholds", True)):
+            bonus *= 0.5
+        return bonus
+
+    def _benchmark_rank_bonus_from_calibration(calibration: dict[str, Any]) -> float:
+        if struct_benchmark_weight == 0.0:
+            return 0.0
+        try:
+            main_gdt = float(calibration.get("main_gdt_ts"))
+        except (TypeError, ValueError):
+            return 0.0
+        bonus = struct_benchmark_weight * max(0.0, min(1.0, main_gdt / 100.0))
+        if not bool(calibration.get("passes_thresholds", True)):
+            bonus *= 0.5
+        return bonus
+
+    def _row_rank_score(row: dict[str, Any]) -> float:
+        base = _safe_float((row.get("physics") or {}).get("composite"), default=-1e9)
+        return base + _benchmark_rank_bonus(row)
 
     def _novelty(seq: str) -> float:
         mut_frac = len(mutation_diff(wt, seq)) / max(len(wt), 1)
@@ -123,7 +212,7 @@ def run_design_cycles(
         if not use_pareto_archive:
             ranked = sorted(
                 current_rows,
-                key=lambda r: _safe_float((r.get("physics") or {}).get("composite"), default=-1e9),
+                key=lambda r: _row_rank_score(r),
                 reverse=True,
             )
             return [str(r.get("job_id", "")) for r in ranked[: max(1, archive_size)] if r.get("job_id")]
@@ -133,7 +222,7 @@ def run_design_cycles(
             phys = row.get("physics") or {}
             feats.append(
                 {
-                    "composite": _safe_float(phys.get("composite"), default=-1e9),
+                    "composite": _row_rank_score(row),
                     "novelty": _safe_float(row.get("novelty_score"), default=0.0),
                     "active_site_violation": _safe_float(phys.get("active_site_violation"), default=1e9),
                 }
@@ -313,6 +402,82 @@ def run_design_cycles(
             )
             row["physics"] = asdict(bd)
             row["structure_pdb"] = str(pdb) if pdb else None
+            row["struct_benchmark"] = None
+            if benchmark_config["enabled"] and pdb is not None:
+                mutation_code = _single_mutation_code(str(row["sequence"]))
+                if not mutation_code:
+                    row["struct_benchmark"] = {
+                        "status": "skipped_not_single_mutation",
+                        "mutation_code": None,
+                    }
+                else:
+                    candidates = benchmark_pairs_by_mut.get(mutation_code) or []
+                    if not candidates:
+                        row["struct_benchmark"] = {
+                            "status": "no_matching_manifest_pair",
+                            "mutation_code": mutation_code,
+                        }
+                    else:
+                        pair = candidates[0]
+                        try:
+                            wt_full = _download_pdb(pair.wt_pdb_id, benchmark_exp_dir)
+                            mut_full = _download_pdb(pair.mut_pdb_id, benchmark_exp_dir)
+                            wt_chain = benchmark_exp_dir / f"{pair.wt_pdb_id.lower()}_{pair.wt_chain_id}.pdb"
+                            mut_chain = benchmark_exp_dir / f"{pair.mut_pdb_id.lower()}_{pair.mut_chain_id}.pdb"
+                            if not wt_chain.is_file():
+                                write_chain_only_pdb(wt_full, wt_chain, pair.wt_chain_id)
+                            if not mut_chain.is_file():
+                                write_chain_only_pdb(mut_full, mut_chain, pair.mut_chain_id)
+
+                            metric_blocks: dict[str, dict[str, Any]] = {}
+                            metric_blocks["predicted_mutant_vs_experimental_mutant"] = metrics_to_dict(
+                                compare_structures_ca(Path(str(pdb)), mut_chain)
+                            )
+                            metric_blocks["experimental_wt_vs_experimental_mutant"] = metrics_to_dict(
+                                compare_structures_ca(wt_chain, mut_chain)
+                            )
+                            if struct_benchmark_include_controls:
+                                wt_key = f"{pair.wt_pdb_id}:{pair.wt_chain_id}"
+                                if wt_key not in wt_pred_cache:
+                                    wt_pred = runner.predict(wt, f"sb_wt_{pair.wt_pdb_id.lower()}", benchmark_pred_wt_dir / wt_key.replace(":", "_"))
+                                    if wt_pred is not None:
+                                        wt_pred_cache[wt_key] = wt_pred
+                                wt_pred_path = wt_pred_cache.get(wt_key)
+                                if wt_pred_path is not None:
+                                    metric_blocks["predicted_wt_vs_experimental_wt"] = metrics_to_dict(
+                                        compare_structures_ca(wt_pred_path, wt_chain)
+                                    )
+                                    metric_blocks["predicted_wt_vs_experimental_mutant"] = metrics_to_dict(
+                                        compare_structures_ca(wt_pred_path, mut_chain)
+                                    )
+                            calibration = build_calibration_profile(
+                                metric_blocks,
+                                gdt_ts_min=struct_benchmark_gdt_ts_min,
+                                coverage_min=struct_benchmark_coverage_min,
+                            )
+                            row["struct_benchmark"] = {
+                                "status": "ok",
+                                "mutation_code": mutation_code,
+                                "reference_pair": {
+                                    "enzyme_key": pair.enzyme_key,
+                                    "wt_pdb_id": pair.wt_pdb_id,
+                                    "wt_chain_id": pair.wt_chain_id,
+                                    "mut_pdb_id": pair.mut_pdb_id,
+                                    "mut_chain_id": pair.mut_chain_id,
+                                    "seq_identity": pair.seq_identity,
+                                },
+                                "metrics": metric_blocks,
+                                "calibration": calibration,
+                                "ranking_bonus": _benchmark_rank_bonus_from_calibration(calibration),
+                            }
+                        except Exception as e:
+                            row["struct_benchmark"] = {
+                                "status": "error",
+                                "mutation_code": mutation_code,
+                                "error": str(e),
+                            }
+    for row in rows:
+        row["rank_score"] = _row_rank_score(row)
     archive_ids = _compute_archive(rows)
     archive_set = set(archive_ids)
     for r in rows:
@@ -341,6 +506,7 @@ def run_design_cycles(
                 {"start": int(s), "end": int(e), "max_mut": int(m)}
                 for s, e, m in region_mutation_budgets
             ],
+            "struct_benchmark": benchmark_config,
     }
     write_run_summary_json(
         out_jsonl,

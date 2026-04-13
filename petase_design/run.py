@@ -81,12 +81,39 @@ def main() -> None:
     ap.add_argument("--openmm-platform", default="CPU")
     ap.add_argument("--protected-indices-json", default="")
     ap.add_argument("--region-budgets-json", default="")
+    ap.add_argument(
+        "--struct-benchmark-manifest",
+        type=Path,
+        default=None,
+        help="Optional benchmark manifest JSON to score structure-predicted variants against experimental mutants",
+    )
+    ap.add_argument(
+        "--struct-benchmark-include-controls",
+        action="store_true",
+        help="Also score predicted WT controls for calibration (slower)",
+    )
+    ap.add_argument("--struct-benchmark-gdt-ts-min", type=float, default=None)
+    ap.add_argument("--struct-benchmark-coverage-min", type=float, default=None)
+    ap.add_argument(
+        "--struct-benchmark-weight",
+        type=float,
+        default=0.0,
+        help="Optional rank bonus weight from benchmark GDT-TS (0 disables blending)",
+    )
     args = ap.parse_args()
 
     if not args.wt_fasta.is_file():
         raise SystemExit(f"WT FASTA not found: {args.wt_fasta}")
     if args.structure_top_k is not None and args.structure_top_k <= 0:
         raise SystemExit("--structure-top-k must be a positive integer.")
+    if args.struct_benchmark_weight < 0:
+        raise SystemExit("--struct-benchmark-weight must be >= 0.")
+    if args.struct_benchmark_gdt_ts_min is not None and not (0.0 <= float(args.struct_benchmark_gdt_ts_min) <= 100.0):
+        raise SystemExit("--struct-benchmark-gdt-ts-min must be within [0,100].")
+    if args.struct_benchmark_coverage_min is not None and not (0.0 <= float(args.struct_benchmark_coverage_min) <= 100.0):
+        raise SystemExit("--struct-benchmark-coverage-min must be within [0,100].")
+    if args.struct_benchmark_manifest is not None and not args.struct_benchmark_manifest.is_file():
+        raise SystemExit(f"Benchmark manifest not found: {args.struct_benchmark_manifest}")
     protected_indices_override: list[int] | None = None
     if str(args.protected_indices_json).strip():
         payload = json.loads(str(args.protected_indices_json))
@@ -147,6 +174,11 @@ def main() -> None:
         openmm_platform=str(args.openmm_platform),
         protected_indices_override=protected_indices_override,
         region_mutation_budgets=region_mutation_budgets,
+        struct_benchmark_manifest=args.struct_benchmark_manifest,
+        struct_benchmark_include_controls=bool(args.struct_benchmark_include_controls),
+        struct_benchmark_gdt_ts_min=(float(args.struct_benchmark_gdt_ts_min) if args.struct_benchmark_gdt_ts_min is not None else None),
+        struct_benchmark_coverage_min=(float(args.struct_benchmark_coverage_min) if args.struct_benchmark_coverage_min is not None else None),
+        struct_benchmark_weight=float(args.struct_benchmark_weight),
     )
     print(f"Wrote {args.cycles} variants to {args.out}", flush=True)
     print(f"Run summary: {args.out.parent / 'run_summary.json'}", flush=True)

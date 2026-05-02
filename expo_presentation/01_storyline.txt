@@ -1,0 +1,22 @@
+Expo Poster Storyline Lock
+Project: petase-thermostability-benchmark
+
+Final Presentation Title
+Calibrated Structural Benchmarking for Protein Design:
+From Noisy WT/Mutant Metadata to Decision-Ready Ranking Signals
+
+Central Claim
+By combining CASP-style structure metrics with a sequence-diff discovery fallback,
+we converted unreliable WT/mutant metadata into an interpretable benchmark layer
+that can directly improve design-stage decision quality.
+
+One-Sentence Takeaway (board center)
+Our pipeline reliably finds usable WT/mutant structure pairs and transforms
+predicted-vs-experimental similarity into calibrated ranking signals for
+protein design under realistic data quality constraints.
+
+30-Second Hook
+Protein design decisions are often made with incomplete trust in structure predictions.
+We built and validated a benchmark workflow that compares predicted mutant structures
+to experimental references, adds calibration controls, and feeds those signals back
+into design ranking so decisions are evidence-driven, not just score-driven.

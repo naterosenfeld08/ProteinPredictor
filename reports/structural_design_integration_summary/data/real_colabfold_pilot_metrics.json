@@ -1,0 +1,50 @@
+{
+  "source": "struct_benchmark_runs/real_colabfold_pilot/run_out",
+  "date": "2026-04-13",
+  "case": {
+    "job_id": "P22364:2OV0:2QDV:M51A",
+    "enzyme_key": "P22364",
+    "enzyme_label": "amicyanin",
+    "mutation_code": "M51A",
+    "seq_identity": 0.9904761904761905,
+    "wt": {
+      "pdb_id": "2OV0",
+      "chain_id": "A"
+    },
+    "mutant": {
+      "pdb_id": "2QDV",
+      "chain_id": "A"
+    }
+  },
+  "predicted_mutant_vs_experimental_mutant": {
+    "gdt_ts": 54.76190476190476,
+    "gdt_ha": 30.0,
+    "rms_ca": 2.9338984813834377,
+    "tm_score": 0.6549765668065841,
+    "p0_5": 0.9523809523809523,
+    "p1": 5.714285714285714,
+    "p2": 22.857142857142858,
+    "p4": 90.47619047619048,
+    "p8": 100.0,
+    "matched_residues": 105,
+    "target_residues": 106,
+    "model_residues": 105,
+    "percent_coverage": 99.05660377358491,
+    "mean_ca_distance_a": 2.7463574660349437,
+    "median_ca_distance_a": 2.823821816075455
+  },
+  "experimental_wt_vs_experimental_mutant_baseline": {
+    "gdt_ts": 99.28571428571428,
+    "gdt_ha": 93.57142857142857,
+    "rms_ca": 0.4499664116341803,
+    "tm_score": 0.9769349300269201,
+    "percent_coverage": 99.05660377358491
+  },
+  "summary": {
+    "pairs_total": 1,
+    "pairs_ok": 1,
+    "pairs_error": 0,
+    "discovery_exclusions": 0,
+    "main_gdt_ts_mean": 54.76190476190476
+  }
+}

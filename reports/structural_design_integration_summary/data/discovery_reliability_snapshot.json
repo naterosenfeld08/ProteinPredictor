@@ -1,0 +1,44 @@
+{
+  "source": "live discovery snapshot",
+  "date": "2026-04-13",
+  "params": {
+    "max_entries": 300,
+    "max_enzymes": 3,
+    "max_pairs_per_enzyme": 2,
+    "resolution_max_a": 3.2,
+    "min_seq_identity": 0.85,
+    "max_len_delta_frac": 0.15,
+    "enable_sequence_diff_fallback": true
+  },
+  "stats": {
+    "searched_entries": 300,
+    "candidate_entries": 232,
+    "fallback_pairs": 3,
+    "title_promoted_mutants": 15,
+    "selected_pairs": 3,
+    "selected_enzymes": 3
+  },
+  "pair_preview": [
+    {
+      "enzyme_key": "A0A7I9C8Z1",
+      "wt_pdb_id": "8C3X",
+      "mut_pdb_id": "8R43",
+      "mutation_code": "H110N",
+      "seq_identity": 0.9957264957264957
+    },
+    {
+      "enzyme_key": "P11172",
+      "wt_pdb_id": "9HDW",
+      "mut_pdb_id": "9HDS",
+      "mutation_code": "T99N",
+      "seq_identity": 0.9961240310077519
+    },
+    {
+      "enzyme_key": "P22364",
+      "wt_pdb_id": "2OV0",
+      "mut_pdb_id": "2QDV",
+      "mutation_code": "M51A",
+      "seq_identity": 0.9904761904761905
+    }
+  ]
+}

@@ -442,6 +442,12 @@ Run from the **repository root** (after `pip install -r requirements.txt`):
 streamlit run gui/app.py
 ```
 
+If `streamlit` is not on your shell `PATH`, use the repo virtualenv explicitly:
+
+```bash
+./.venv/bin/python -m streamlit run gui/app.py
+```
+
 The local app opens with **two** primary tabs:
 
 1. **Design + Prediction** — unified workflow with:
@@ -514,6 +520,13 @@ Automated benchmark workflow to discover WT/mutant X-ray pairs, run structure pr
 - **Docs:** [`docs/STRUCTURAL_BENCHMARK.md`](docs/STRUCTURAL_BENCHMARK.md)
 - **Outputs:** `discovery_manifest.json`, `benchmark_results.jsonl`, `benchmark_results.csv`, `benchmark_summary.json`
 - **Smoke validation:** `python scripts/struct_benchmark_smoke.py`
+
+### Expo/trifold presentation assets
+
+Presentation-ready board copy, monitor scripts, advanced charts, and PyMOL render scripts live in:
+
+- `expo_presentation/`
+- `expo_presentation/03_figure_pack/ADVANCED_VISUALS_GUIDE.md`
 
 ### Evaluation
 

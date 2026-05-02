@@ -1,0 +1,91 @@
+Structural Design Integration Findings
+Project: petase-thermostability-benchmark
+Date: 2026-04-13
+
+Overview
+- We implemented and validated an end-to-end WT/mutant structural benchmarking workflow.
+- The workflow now supports robust discovery fallback for noisy mutation metadata and integrates structural benchmark signals into the PETase design CLI path.
+
+What was evaluated
+1) Discovery reliability (WT/mutant structure pairing from RCSB)
+2) Real ColabFold pilot benchmarking against experimental mutant structure
+3) Integration of benchmark metrics into design-run JSONL and run_summary outputs
+
+Key discovery reliability results (fallback-enabled snapshot)
+- Parameters:
+  - max_entries=300
+  - max_enzymes=3
+  - max_pairs_per_enzyme=2
+  - resolution_max_a=3.2
+  - min_seq_identity=0.85
+  - max_len_delta_frac=0.15
+  - enable_sequence_diff_fallback=true
+- Output stats:
+  - searched_entries: 300
+  - candidate_entries: 232
+  - selected_pairs: 3
+  - selected_enzymes: 3
+  - fallback_pairs: 3
+  - title_promoted_mutants: 15
+- Example recovered pairs:
+  - 8C3X -> 8R43 (H110N)
+  - 9HDW -> 9HDS (T99N)
+  - 2OV0 -> 2QDV (M51A)
+
+Interpretation:
+- The fallback logic materially improves pair recovery when RCSB mutation annotations are missing or inconsistent.
+- Pair extraction now yields non-zero practical candidates under realistic query constraints.
+
+Real ColabFold pilot (1 case)
+- Pair:
+  - WT: 2OV0 chain A
+  - Mutant: 2QDV chain A
+  - Mutation: M51A
+- Main benchmark (predicted_mutant_vs_experimental_mutant):
+  - GDT_TS: 54.7619
+  - GDT_HA: 30.0
+  - RMS_CA: 2.9339 A
+  - TM-score: 0.6550
+  - Coverage: 99.0566%
+- Baseline context (experimental WT vs experimental mutant):
+  - GDT_TS: 99.2857
+  - GDT_HA: 93.5714
+  - RMS_CA: 0.4500 A
+  - TM-score: 0.9769
+
+Interpretation:
+- The target structures are very close experimentally, while predicted-vs-experimental agreement is moderate for this pilot.
+- This supports using calibration/control blocks and thresholded interpretation rather than relying on a single score in isolation.
+
+Integration status (implemented)
+- Discovery:
+  - strict metadata path + sequence-diff fallback
+  - exclusion reasons and fallback stats surfaced
+- Benchmark metrics:
+  - standardized blocks:
+    - predicted_mutant_vs_experimental_mutant
+    - predicted_wt_vs_experimental_wt
+    - predicted_wt_vs_experimental_mutant
+    - experimental_wt_vs_experimental_mutant
+  - calibration profile fields:
+    - delta_gdt_vs_wt_baseline
+    - delta_tm_vs_wt_baseline
+    - threshold pass/fail and quality flags
+- Design CLI:
+  - benchmark manifest + threshold + weight flags added
+  - per-variant struct_benchmark block and optional rank bonus
+- Run summary:
+  - benchmark coverage counts + aggregate GDT/TM metrics
+- Validation:
+  - deterministic smoke script passes
+
+Known limitations / caveats
+- Discovery quality remains sensitive to RCSB title wording and metadata completeness.
+- CPU-only ColabFold runs are slow; practical benchmarking should be top-K staged or GPU-accelerated.
+- Pilot n=1 is proof-of-pipeline, not a final model-quality estimate.
+
+Recommended next steps
+1) Expand benchmark set (multiple enzymes, 10-50 pairs)
+2) Add pass/fail policy bands for GDT_TS and coverage in downstream ranking
+3) Compare with/without control blocks to quantify ranking stability
+4) Add optional GUI surfacing once CLI behavior is stable over larger runs

@@ -1,0 +1,13 @@
+category,metric,value,unit,notes
+discovery,selected_pairs,3,count,fallback-enabled snapshot (max_entries=300)
+discovery,selected_enzymes,3,count,fallback-enabled snapshot (max_entries=300)
+discovery,fallback_pairs,3,count,pairs recovered via sequence-diff fallback
+discovery,title_promoted_mutants,15,count,title-based mutant promotion for fallback
+pilot,pred_vs_exp_mut_gdt_ts,54.76190476190476,percent,2OV0->2QDV M51A
+pilot,pred_vs_exp_mut_gdt_ha,30.0,percent,2OV0->2QDV M51A
+pilot,pred_vs_exp_mut_rms_ca,2.9338984813834377,angstrom,2OV0->2QDV M51A
+pilot,pred_vs_exp_mut_tm_score,0.6549765668065841,unitless,2OV0->2QDV M51A
+pilot,pred_vs_exp_mut_coverage,99.05660377358491,percent,matched_residues=105 target_residues=106
+baseline,exp_wt_vs_exp_mut_gdt_ts,99.28571428571428,percent,context baseline for same case
+baseline,exp_wt_vs_exp_mut_rms_ca,0.4499664116341803,angstrom,context baseline for same case
+baseline,exp_wt_vs_exp_mut_tm_score,0.9769349300269201,unitless,context baseline for same case

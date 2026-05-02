@@ -1,0 +1,7 @@
+flowchart LR
+  discoverPairs[DiscoverWTMutantPairs] --> fallbackResolve[SequenceDiffFallback]
+  fallbackResolve --> predictMut[PredictMutantStructureColabFold]
+  predictMut --> caspMetrics[ComputeCASPStyleMetrics]
+  caspMetrics --> calibrateControls[ComputeControlBaselines]
+  calibrateControls --> rankBlend[BlendIntoDesignRanking]
+  rankBlend --> outputs[JSONLRunSummaryCSVOutputs]

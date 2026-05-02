@@ -115,3 +115,16 @@ Baseline Lock/
 !**/README.txt
 !**/*.md
 !**/*.txt
+
+# Keep curated structural integration report data snapshots (small, shareable)
+!reports/structural_design_integration_summary/data/
+!reports/structural_design_integration_summary/data/*.json
+!reports/structural_design_integration_summary/data/*.csv
+
+# Keep expo visual assets and source data
+!expo_presentation/03_figure_pack/*.json
+!expo_presentation/03_figure_pack/*.png
+!expo_presentation/03_figure_pack/*.gif
+
+# Ignore local benchmark run dumps and heavyweight outputs
+struct_benchmark_runs/

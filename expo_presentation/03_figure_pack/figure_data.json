@@ -1,0 +1,35 @@
+{
+  "discovery_snapshot": {
+    "searched_entries": 300,
+    "candidate_entries": 232,
+    "selected_pairs": 3,
+    "selected_enzymes": 3,
+    "fallback_pairs": 3,
+    "title_promoted_mutants": 15
+  },
+  "pilot_case": {
+    "id": "P22364:2OV0:2QDV:M51A",
+    "predicted_vs_experimental_mutant": {
+      "gdt_ts": 54.7619,
+      "gdt_ha": 30.0,
+      "rms_ca": 2.9339,
+      "tm_score": 0.6550,
+      "coverage": 99.0566
+    },
+    "experimental_wt_vs_experimental_mutant": {
+      "gdt_ts": 99.2857,
+      "gdt_ha": 93.5714,
+      "rms_ca": 0.4500,
+      "tm_score": 0.9769,
+      "coverage": 99.0566
+    }
+  },
+  "integration_components": [
+    "Discovery fallback",
+    "CASP-style metrics",
+    "Calibration controls",
+    "Design ranking integration",
+    "Run summary benchmark reporting",
+    "Smoke validation workflow"
+  ]
+}

@@ -51,6 +51,8 @@ Useful flags:
 | `--disable-sequence-diff-fallback` | Turn off fallback that infers single-point mutants from WT↔mutant sequence diffs |
 | `--gdt-ts-min` | Optional quality threshold used in calibration flags |
 | `--coverage-min` | Optional coverage threshold used in calibration flags |
+| `--discovery-only` | Only run discovery and write manifests/summaries (no prediction/scoring) |
+| `--manifest-offset N` | Skip first `N` pairs from manifest/discovery before applying `--max-cases` |
 
 ## Design CLI Integration
 
@@ -97,6 +99,33 @@ Under `--out-dir`:
   - downloaded PDBs and extracted chain files
 - `predicted_structures/`
   - ColabFold outputs used for scoring
+
+When `--discovery-only` is used, outputs include:
+
+- `discovery_manifest.json`
+- `discovery_summary.json`
+
+## 50-pair campaign workflow (recommended)
+
+Generate a staged 50-pair campaign plan:
+
+```bash
+python scripts/struct_benchmark_campaign.py \
+  --target-pairs 50 \
+  --batch-size 10 \
+  --max-entries 4000 \
+  --max-enzymes 60 \
+  --max-pairs-per-enzyme 3 \
+  --resolution-max 3.2 \
+  --min-seq-identity 0.85 \
+  --max-len-delta-frac 0.15
+```
+
+This writes:
+- one canonical manifest (`campaign_manifest.json`)
+- split manifests (`campaign_manifest_batch_*.json`)
+- `run_colabfold_batches.sh` for staged execution
+- `campaign_summary.json`
 
 ## Notes on Interpretation
 

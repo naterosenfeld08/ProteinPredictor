@@ -9,6 +9,7 @@ schema quickly without running real AlphaFold inference.
 from __future__ import annotations
 
 import json
+import argparse
 from pathlib import Path
 import subprocess
 import sys
@@ -56,6 +57,15 @@ def _assert(cond: bool, msg: str) -> None:
 
 
 def main() -> None:
+    ap = argparse.ArgumentParser(description="Smoke validation for structural benchmark workflow.")
+    ap.add_argument("--cases", type=int, default=1, help="Number of synthetic manifest pairs to include")
+    ap.add_argument("--max-cases", type=int, default=0, help="Forwarded max-cases cap to benchmark_run (0 = no cap)")
+    args = ap.parse_args()
+    if int(args.cases) < 1:
+        raise SystemExit("--cases must be >= 1")
+    if int(args.max_cases) < 0:
+        raise SystemExit("--max-cases must be >= 0")
+
     repo_root = Path(__file__).resolve().parents[1]
     with tempfile.TemporaryDirectory(prefix="struct_benchmark_smoke_") as td:
         tdp = Path(td)
@@ -64,30 +74,38 @@ def main() -> None:
         manifest_path = tdp / "manifest.json"
         _write_mock_colabfold(mock_bin)
 
-        manifest = {
-            "schema_version": "smoke.v1",
-            "stats": {"source": "smoke_manifest"},
-            "exclusions": [],
-            "pairs": [
+        pairs = []
+        for i in range(int(args.cases)):
+            pos = i + 1
+            wt_seq = ("A" * 76)
+            mut_seq = ("V" + "A" * 75) if i % 2 == 0 else ("A" * 75 + "V")
+            mut_code = f"A{pos}V"
+            pairs.append(
                 {
-                    "enzyme_key": "smoke_ubq",
+                    "enzyme_key": f"smoke_ubq_{i+1:02d}",
                     "enzyme_label": "smoke_ubq",
                     "uniprot_id": None,
                     "wt_pdb_id": "1UBQ",
                     "wt_entity_id": "1",
                     "wt_chain_id": "A",
-                    "wt_sequence": "A" * 76,
+                    "wt_sequence": wt_seq,
                     "wt_resolution_a": 1.8,
                     "mut_pdb_id": "1UBQ",
                     "mut_entity_id": "1",
                     "mut_chain_id": "A",
-                    "mut_sequence": "A" * 76,
+                    "mut_sequence": mut_seq,
                     "mut_resolution_a": 1.8,
-                    "mutation_code": "A1V",
-                    "mutation_raw": "A1V",
-                    "seq_identity": 1.0,
+                    "mutation_code": mut_code,
+                    "mutation_raw": mut_code,
+                    "seq_identity": 0.9868,
                 }
-            ],
+            )
+
+        manifest = {
+            "schema_version": "smoke.v1",
+            "stats": {"source": "smoke_manifest", "requested_cases": int(args.cases)},
+            "exclusions": [],
+            "pairs": pairs,
         }
         manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
@@ -102,13 +120,13 @@ def main() -> None:
             "--colabfold",
             "--colabfold-bin",
             str(mock_bin),
-            "--max-cases",
-            "1",
             "--gdt-ts-min",
             "40",
             "--coverage-min",
             "80",
         ]
+        if int(args.max_cases) > 0:
+            cmd.extend(["--max-cases", str(int(args.max_cases))])
         proc = subprocess.run(cmd, cwd=str(repo_root), text=True, capture_output=True)
         _assert(proc.returncode == 0, f"benchmark_run failed\nstdout={proc.stdout}\nstderr={proc.stderr}")
 
@@ -124,14 +142,16 @@ def main() -> None:
         summary = json.loads(summary_path.read_text(encoding="utf-8"))
         _assert("counts" in summary and "metrics_summary" in summary, "summary missing required sections")
         _assert(int((summary.get("counts") or {}).get("pairs_ok") or 0) >= 1, "expected at least one ok pair")
+        expected_rows = int(args.max_cases) if int(args.max_cases) > 0 else int(args.cases)
+        expected_rows = min(expected_rows, int(args.cases))
 
         rows = [json.loads(x) for x in jsonl_path.read_text(encoding="utf-8").splitlines() if x.strip()]
-        _assert(len(rows) == 1, "expected one row in JSONL")
-        row0 = rows[0]
-        _assert(row0.get("status") == "ok", "expected status=ok")
-        calib = row0.get("calibration") or {}
-        _assert("main_gdt_ts" in calib and "passes_thresholds" in calib, "missing calibration fields")
-        print("struct_benchmark_smoke: PASS")
+        _assert(len(rows) == expected_rows, f"expected {expected_rows} row(s) in JSONL")
+        for row0 in rows:
+            _assert(row0.get("status") == "ok", "expected status=ok")
+            calib = row0.get("calibration") or {}
+            _assert("main_gdt_ts" in calib and "passes_thresholds" in calib, "missing calibration fields")
+        print(f"struct_benchmark_smoke: PASS (rows={len(rows)})")
 
 
 if __name__ == "__main__":

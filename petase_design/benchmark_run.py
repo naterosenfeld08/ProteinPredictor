@@ -246,10 +246,12 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="Automated WT/mutant structural benchmark")
     ap.add_argument("--out-dir", type=Path, default=Path("struct_benchmark_runs") / datetime.now().strftime("%Y%m%d_%H%M%S"))
     ap.add_argument("--manifest-json", type=Path, default=None, help="Optional existing discovery manifest to reuse")
+    ap.add_argument("--discovery-only", action="store_true", help="Only discover/write manifest; skip predictions and scoring")
     ap.add_argument("--max-entries", type=int, default=800)
     ap.add_argument("--max-enzymes", type=int, default=3)
     ap.add_argument("--max-pairs-per-enzyme", type=int, default=3)
     ap.add_argument("--max-cases", type=int, default=0, help="0 means no explicit cap")
+    ap.add_argument("--manifest-offset", type=int, default=0, help="Skip first N discovered/manifest pairs before scoring")
     ap.add_argument("--resolution-max", type=float, default=2.8)
     ap.add_argument("--min-seq-identity", type=float, default=0.95)
     ap.add_argument("--max-len-delta-frac", type=float, default=0.05)
@@ -274,6 +276,20 @@ def main() -> None:
         raise SystemExit("--gdt-ts-min must be within [0,100].")
     if args.coverage_min is not None and not (0.0 <= float(args.coverage_min) <= 100.0):
         raise SystemExit("--coverage-min must be within [0,100].")
+    if int(args.max_entries) < 1:
+        raise SystemExit("--max-entries must be >= 1.")
+    if int(args.max_enzymes) < 1:
+        raise SystemExit("--max-enzymes must be >= 1.")
+    if int(args.max_pairs_per_enzyme) < 1:
+        raise SystemExit("--max-pairs-per-enzyme must be >= 1.")
+    if int(args.max_cases) < 0:
+        raise SystemExit("--max-cases must be >= 0.")
+    if int(args.manifest_offset) < 0:
+        raise SystemExit("--manifest-offset must be >= 0.")
+    if bool(args.discovery_only) and bool(args.colabfold):
+        raise SystemExit("--discovery-only cannot be combined with --colabfold.")
+    if not bool(args.discovery_only) and not bool(args.colabfold):
+        raise SystemExit("Prediction/scoring requires --colabfold, or use --discovery-only.")
 
     out_dir = args.out_dir
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -299,8 +315,27 @@ def main() -> None:
             enable_sequence_diff_fallback=not bool(args.disable_sequence_diff_fallback),
         )
     write_discovery_manifest(report, out_dir / "discovery_manifest.json")
+    if bool(args.discovery_only):
+        summary_payload = {
+            "schema_version": "2026-05-02.struct-benchmark.discovery-only.v1",
+            "generated_at": _utc_now(),
+            "counts": {
+                "pairs_discovered": len(report.pairs),
+                "enzymes_discovered": len({p.enzyme_key for p in report.pairs}),
+                "exclusions": len(report.exclusions),
+            },
+            "discovery_stats": report.stats,
+            "files": {
+                "discovery_manifest_json": str(out_dir / "discovery_manifest.json"),
+            },
+        }
+        (out_dir / "discovery_summary.json").write_text(json.dumps(summary_payload, indent=2), encoding="utf-8")
+        print(f"[struct-benchmark] discovery-only wrote outputs under: {out_dir}", flush=True)
+        return
 
     pairs = list(report.pairs)
+    if int(args.manifest_offset) > 0:
+        pairs = pairs[int(args.manifest_offset) :]
     if args.max_cases and args.max_cases > 0:
         pairs = pairs[: int(args.max_cases)]
     if not pairs:
